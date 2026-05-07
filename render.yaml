@@ -1,0 +1,35 @@
+# Render Blueprint — backend cartorio-mosaico no free tier.
+#
+# Antes de aplicar:
+# 1. Crie o Postgres com PostGIS no Supabase (ou outro provedor que tenha
+#    a extensão postgis). Anote a DATABASE_URL no formato
+#    postgresql+psycopg://user:pass@host:port/dbname?sslmode=require
+# 2. Aplique este Blueprint via "New +" → "Blueprint" no dashboard do Render
+#    apontando pro repositório.
+# 3. Quando o Render pedir, preencha as envs SECRET_KEY e DATABASE_URL.
+# 4. Espere ~5 min do primeiro deploy (build do Dockerfile + alembic upgrade).
+# 5. Anote a URL pública do serviço (formato https://cartorio-mosaico-api.onrender.com).
+#
+# Limitações do free tier:
+# - Serviço dorme após 15min de inatividade. Primeira request pós-sleep
+#   demora ~30s pra acordar.
+# - 512 MB RAM, 0,1 vCPU. Suficiente pra demo, não pra produção real.
+services:
+  - type: web
+    name: cartorio-mosaico-api
+    runtime: docker
+    dockerfilePath: ./backend/Dockerfile
+    dockerContext: .
+    plan: free
+    region: oregon
+    branch: main
+    healthCheckPath: /health
+    envVars:
+      - key: DATABASE_URL
+        sync: false
+      - key: SECRET_KEY
+        generateValue: true
+      - key: CORS_ORIGINS
+        value: https://henriquesimoessilva3-png.github.io
+      - key: DEBUG
+        value: "false"
