@@ -49,6 +49,10 @@ def render_croqui_satellite_png(
     coords_lonlat: list[tuple[float, float]],
     width: int = 720,
     height: int = 480,
+    pad_ratio: float = 0.25,
+    marker_size: int = 6,
+    font_size: int = 11,
+    tile_zoom_override: int | None = None,
 ) -> bytes | None:
     if len(coords_lonlat) < 3:
         return None
@@ -58,14 +62,17 @@ def render_croqui_satellite_png(
     min_lon, max_lon = min(lons), max(lons)
     min_lat, max_lat = min(lats), max(lats)
 
-    pad_lon = max(max_lon - min_lon, 1e-5) * 0.25
-    pad_lat = max(max_lat - min_lat, 1e-5) * 0.25
+    pad_lon = max(max_lon - min_lon, 1e-5) * pad_ratio
+    pad_lat = max(max_lat - min_lat, 1e-5) * pad_ratio
     min_lon -= pad_lon
     max_lon += pad_lon
     min_lat -= pad_lat
     max_lat += pad_lat
 
-    z = _pick_zoom(min_lon, max_lon, min_lat, max_lat)
+    if tile_zoom_override is not None:
+        z = max(11, min(MAX_ZOOM_ESRI, tile_zoom_override))
+    else:
+        z = _pick_zoom(min_lon, max_lon, min_lat, max_lat)
 
     x_min_f = _lon2tile_x(min_lon, z)
     x_max_f = _lon2tile_x(max_lon, z)
@@ -130,10 +137,23 @@ def render_croqui_satellite_png(
     except Exception:
         font = None
 
+    label_offset = max(font_size - 2, 4)
     for i, (x, y) in enumerate(pts):
-        draw.ellipse((x - 6, y - 6, x + 6, y + 6), fill=(255, 255, 255, 255), outline=(255, 107, 53, 255), width=2)
+        draw.ellipse(
+            (x - marker_size, y - marker_size, x + marker_size, y + marker_size),
+            fill=(255, 255, 255, 255),
+            outline=(255, 107, 53, 255),
+            width=2,
+        )
         if font:
-            draw.text((x + 9, y - 14), f"M{i}", fill=(255, 255, 255, 255), font=font, stroke_width=2, stroke_fill=(0, 0, 0, 255))
+            draw.text(
+                (x + label_offset, y - (font_size + 3)),
+                f"M{i}",
+                fill=(255, 255, 255, 255),
+                font=font,
+                stroke_width=2,
+                stroke_fill=(0, 0, 0, 255),
+            )
 
     out = Image.alpha_composite(canvas, overlay).convert("RGB")
     buf = BytesIO()

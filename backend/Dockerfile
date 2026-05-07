@@ -19,6 +19,7 @@ RUN uv pip install --system --no-cache .
 COPY backend/src /app/src
 COPY backend/alembic.ini /app/
 COPY templates /app/templates
+COPY scripts /app/scripts
 
 ENV PYTHONPATH=/app/src \
     PYTHONUNBUFFERED=1

@@ -11,6 +11,7 @@ class AuditLog(Base):
     __tablename__ = "audit_log"
 
     id: Mapped[int] = mapped_column(BigInteger, primary_key=True)
+    tenant_id: Mapped[int | None] = mapped_column(ForeignKey("tenant.id"), index=True)
     user_id: Mapped[int | None] = mapped_column(ForeignKey("usuario.id"))
     acao: Mapped[str] = mapped_column(String(64))
     entidade: Mapped[str] = mapped_column(String(64))

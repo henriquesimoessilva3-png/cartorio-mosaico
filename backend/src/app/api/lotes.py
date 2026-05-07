@@ -6,7 +6,7 @@ from shapely.geometry import Polygon
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from app.api.deps import get_current_user, require_role
+from app.api.deps import get_current_tenant_id, get_current_user, require_role
 from app.db.database import get_db
 from app.models.lote_geometria import LoteGeometria
 from app.models.matricula import Matricula
@@ -19,6 +19,7 @@ from app.services.validacao import comparar_descricao_vs_lados
 router = APIRouter(prefix="/api/lotes", tags=["lotes"])
 DbSession = Annotated[Session, Depends(get_db)]
 AuthUser = Annotated[Usuario, Depends(get_current_user)]
+TenantId = Annotated[int, Depends(get_current_tenant_id)]
 EditorRole = Annotated[Usuario, Depends(require_role("escrivao", "escrevente"))]
 
 
@@ -27,9 +28,14 @@ EditorRole = Annotated[Usuario, Depends(require_role("escrivao", "escrevente"))]
     response_model=LoteGeometriaRead,
     status_code=status.HTTP_201_CREATED,
 )
-def criar(payload: LoteGeometriaCreate, db: DbSession, _user: EditorRole):
+def criar(
+    payload: LoteGeometriaCreate,
+    db: DbSession,
+    _user: EditorRole,
+    tenant_id: TenantId,
+):
     matricula = db.get(Matricula, payload.matricula_id)
-    if matricula is None:
+    if matricula is None or matricula.tenant_id != tenant_id:
         raise HTTPException(404, "Matrícula não encontrada")
 
     coords = [(c[0], c[1]) for c in payload.vertices]
@@ -55,6 +61,7 @@ def criar(payload: LoteGeometriaCreate, db: DbSession, _user: EditorRole):
     )
 
     lote = LoteGeometria(
+        tenant_id=tenant_id,
         matricula_id=payload.matricula_id,
         versao=last_versao + 1,
         geometry=from_shape(poly, srid=4674),
@@ -82,7 +89,12 @@ def criar(payload: LoteGeometriaCreate, db: DbSession, _user: EditorRole):
 
 
 @router.post("/{lote_id}/inferir-confrontantes")
-def inferir_confrontantes_endpoint(lote_id: int, db: DbSession, _user: EditorRole):
+def inferir_confrontantes_endpoint(
+    lote_id: int, db: DbSession, _user: EditorRole, tenant_id: TenantId
+):
+    lote = db.get(LoteGeometria, lote_id)
+    if lote is None or lote.tenant_id != tenant_id:
+        raise HTTPException(404, "Lote não encontrado")
     try:
         confrontantes = inferir_para_lote(db, lote_id)
     except ValueError as e:
@@ -91,9 +103,11 @@ def inferir_confrontantes_endpoint(lote_id: int, db: DbSession, _user: EditorRol
 
 
 @router.get("/{lote_id}/validacao-textual")
-def validacao_textual(lote_id: int, db: DbSession, _user: AuthUser):
+def validacao_textual(
+    lote_id: int, db: DbSession, _user: AuthUser, tenant_id: TenantId
+):
     lote = db.get(LoteGeometria, lote_id)
-    if lote is None:
+    if lote is None or lote.tenant_id != tenant_id:
         raise HTTPException(404, "Lote não encontrado")
     matricula = db.get(Matricula, lote.matricula_id)
     distancias = [
@@ -106,9 +120,9 @@ def validacao_textual(lote_id: int, db: DbSession, _user: AuthUser):
 
 
 @router.get("/{lote_id}", response_model=LoteGeometriaRead)
-def detalhar(lote_id: int, db: DbSession, _user: AuthUser):
+def detalhar(lote_id: int, db: DbSession, _user: AuthUser, tenant_id: TenantId):
     lote = db.get(LoteGeometria, lote_id)
-    if lote is None:
+    if lote is None or lote.tenant_id != tenant_id:
         raise HTTPException(404, "Lote não encontrado")
     return lote
 
@@ -117,10 +131,13 @@ def detalhar(lote_id: int, db: DbSession, _user: AuthUser):
     "/por-matricula/{matricula_id}",
     response_model=list[LoteGeometriaRead],
 )
-def por_matricula(matricula_id: int, db: DbSession, _user: AuthUser):
+def por_matricula(
+    matricula_id: int, db: DbSession, _user: AuthUser, tenant_id: TenantId
+):
     stmt = (
         select(LoteGeometria)
         .where(LoteGeometria.matricula_id == matricula_id)
+        .where(LoteGeometria.tenant_id == tenant_id)
         .order_by(LoteGeometria.versao.desc())
     )
     return db.execute(stmt).scalars().all()

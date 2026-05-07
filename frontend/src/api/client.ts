@@ -42,12 +42,20 @@ async function request<T>(
   return r.json();
 }
 
+export interface TenantInfo {
+  id: number;
+  slug: string;
+  nome: string;
+}
+
 export interface User {
   id: number;
   nome: string;
   email: string;
   role: string;
   ativo: boolean;
+  tenant_id?: number | null;
+  tenant?: TenantInfo | null;
 }
 
 export async function healthCheck(): Promise<{ status: string }> {
@@ -188,6 +196,53 @@ export async function desativarUsuario(id: number): Promise<void> {
   return request(`/api/auth/users/${id}`, { method: "DELETE" });
 }
 
+// Auditoria reversa (admin only)
+export interface AuditoriaListItem {
+  id: number;
+  user_id: number | null;
+  user_nome: string | null;
+  acao: string;
+  entidade: string;
+  entidade_id: number | null;
+  criado_em: string;
+}
+
+export interface AuditoriaDetail extends AuditoriaListItem {
+  payload_jsonb: Record<string, unknown> | null;
+}
+
+export interface AuditoriaListResponse {
+  items: AuditoriaListItem[];
+  total: number;
+  limit: number;
+  offset: number;
+}
+
+export interface AuditoriaFilters {
+  limit?: number;
+  offset?: number;
+  user_id?: number;
+  acao?: string;
+  entidade?: string;
+  from?: string;
+  to?: string;
+}
+
+export async function listarAuditorias(
+  params: AuditoriaFilters = {},
+): Promise<AuditoriaListResponse> {
+  const qs = new URLSearchParams();
+  Object.entries(params).forEach(([k, v]) => {
+    if (v !== undefined && v !== null && v !== "") qs.set(k, String(v));
+  });
+  const suffix = qs.toString() ? `?${qs.toString()}` : "";
+  return request(`/api/auditorias${suffix}`);
+}
+
+export async function obterAuditoria(id: number): Promise<AuditoriaDetail> {
+  return request(`/api/auditorias/${id}`);
+}
+
 export interface Conflito {
   lote_a: number;
   matricula_a: number;
@@ -204,17 +259,56 @@ export async function buscarConflitos(): Promise<{ overlaps: Conflito[] }> {
   return request("/api/mosaico/conflitos");
 }
 
-export function memorialPdfUrl(loteId: number): string {
-  // Token via query string para download direto via <a href>
-  const params = _token ? `?token=${encodeURIComponent(_token)}` : "";
-  return `${BASE}/api/memoriais/${loteId}.pdf${params}`;
+export interface PdfOptions {
+  cartorio_nome?: string;
+  cartorio_comarca?: string;
+  operador_nome?: string;
+  croqui_width?: number;
+  croqui_height?: number;
+  croqui_pad?: number;
+  marker_size?: number;
+  font_size?: number;
+  page_margin_cm?: number;
+  tile_zoom_override?: number;
+  usar_satelite?: boolean;
 }
 
-// Helper: download PDF authenticated via fetch (workaround para token em header)
-export async function baixarMemorialPdf(loteId: number): Promise<Blob> {
-  const r = await fetch(`${BASE}/api/memoriais/${loteId}.pdf`, {
-    headers: authHeaders(),
+function _serializeOpts(opts: PdfOptions = {}, extra: Record<string, string> = {}): string {
+  const qs = new URLSearchParams(extra);
+  Object.entries(opts).forEach(([k, v]) => {
+    if (v !== undefined && v !== null && v !== "") qs.set(k, String(v));
   });
+  const s = qs.toString();
+  return s ? `?${s}` : "";
+}
+
+export function memorialPdfUrl(loteId: number, opts: PdfOptions = {}): string {
+  // Token via query string permite download direto via <a href download>.
+  const extra: Record<string, string> = {};
+  if (_token) extra.token = _token;
+  return `${BASE}/api/memoriais/${loteId}.pdf${_serializeOpts(opts, extra)}`;
+}
+
+export async function baixarMemorialPdf(
+  loteId: number,
+  opts: PdfOptions = {},
+): Promise<Blob> {
+  const r = await fetch(
+    `${BASE}/api/memoriais/${loteId}.pdf${_serializeOpts(opts)}`,
+    { headers: authHeaders() },
+  );
   if (!r.ok) throw new Error(`PDF: ${r.status}`);
+  return r.blob();
+}
+
+export async function previewCroquiBlob(
+  loteId: number,
+  opts: PdfOptions = {},
+): Promise<Blob> {
+  const r = await fetch(
+    `${BASE}/api/memoriais/${loteId}.pdf${_serializeOpts({ ...opts }, { format: "preview" })}`,
+    { headers: authHeaders() },
+  );
+  if (!r.ok) throw new Error(`Preview: ${r.status}`);
   return r.blob();
 }

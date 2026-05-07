@@ -5,7 +5,7 @@ from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
-from app.api.deps import get_current_user, require_role
+from app.api.deps import get_current_tenant_id, get_current_user, require_role
 from app.db.database import get_db
 from app.models.matricula import Matricula
 from app.models.usuario import Usuario
@@ -20,6 +20,7 @@ router = APIRouter(prefix="/api/matriculas", tags=["matriculas"])
 
 DbSession = Annotated[Session, Depends(get_db)]
 AuthUser = Annotated[Usuario, Depends(get_current_user)]
+TenantId = Annotated[int, Depends(get_current_tenant_id)]
 EditorRole = Annotated[Usuario, Depends(require_role("escrivao", "escrevente"))]
 AdminRole = Annotated[Usuario, Depends(require_role("admin"))]
 
@@ -37,11 +38,16 @@ def _apply_cpf(payload: dict) -> dict:
 def listar(
     db: DbSession,
     _user: AuthUser,
+    tenant_id: TenantId,
     skip: int = Query(0, ge=0),
     limit: int = Query(50, ge=1, le=200),
     status_filter: str | None = Query(None, alias="status"),
 ):
-    stmt = select(Matricula).order_by(Matricula.numero)
+    stmt = (
+        select(Matricula)
+        .where(Matricula.tenant_id == tenant_id)
+        .order_by(Matricula.numero)
+    )
     if status_filter:
         stmt = stmt.where(Matricula.status_geometria == status_filter)
     stmt = stmt.offset(skip).limit(limit)
@@ -49,17 +55,22 @@ def listar(
 
 
 @router.get("/{matricula_id}", response_model=MatriculaRead)
-def detalhar(matricula_id: int, db: DbSession, _user: AuthUser):
+def detalhar(matricula_id: int, db: DbSession, _user: AuthUser, tenant_id: TenantId):
     m = db.get(Matricula, matricula_id)
-    if m is None:
+    if m is None or m.tenant_id != tenant_id:
         raise HTTPException(status_code=404, detail="Matrícula não encontrada")
     return m
 
 
 @router.post("", response_model=MatriculaRead, status_code=status.HTTP_201_CREATED)
-def criar(payload: MatriculaCreate, db: DbSession, _user: EditorRole):
+def criar(
+    payload: MatriculaCreate,
+    db: DbSession,
+    _user: EditorRole,
+    tenant_id: TenantId,
+):
     data = _apply_cpf(payload.model_dump())
-    m = Matricula(**data)
+    m = Matricula(tenant_id=tenant_id, **data)
     db.add(m)
     try:
         db.commit()
@@ -78,9 +89,10 @@ def atualizar(
     payload: MatriculaUpdate,
     db: DbSession,
     _user: EditorRole,
+    tenant_id: TenantId,
 ):
     m = db.get(Matricula, matricula_id)
-    if m is None:
+    if m is None or m.tenant_id != tenant_id:
         raise HTTPException(status_code=404, detail="Matrícula não encontrada")
     data = _apply_cpf(payload.model_dump(exclude_unset=True))
     for k, v in data.items():
@@ -91,9 +103,9 @@ def atualizar(
 
 
 @router.delete("/{matricula_id}", status_code=status.HTTP_204_NO_CONTENT)
-def remover(matricula_id: int, db: DbSession, _user: AdminRole):
+def remover(matricula_id: int, db: DbSession, _user: AdminRole, tenant_id: TenantId):
     m = db.get(Matricula, matricula_id)
-    if m is None:
+    if m is None or m.tenant_id != tenant_id:
         raise HTTPException(status_code=404, detail="Matrícula não encontrada")
     db.delete(m)
     db.commit()

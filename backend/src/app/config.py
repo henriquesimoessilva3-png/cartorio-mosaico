@@ -17,5 +17,8 @@ class Settings(BaseSettings):
     default_utm_epsg: int = 31983
     default_geodetic_epsg: int = 4674
 
+    # CORS — origens separadas por vírgula. Vazio = sem CORS (mesma origem).
+    cors_origins: str = ""
+
 
 settings = Settings()

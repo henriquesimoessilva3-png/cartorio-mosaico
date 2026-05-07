@@ -1,7 +1,7 @@
-"""Dependências comuns — autenticação JWT."""
+"""Dependências comuns — autenticação JWT + scope de tenant."""
 from typing import Annotated
 
-from fastapi import Depends, HTTPException, status
+from fastapi import Depends, Header, HTTPException, status
 from fastapi.security import OAuth2PasswordBearer
 from sqlalchemy.orm import Session
 
@@ -29,6 +29,24 @@ def get_current_user(
     if user is None or not user.ativo:
         raise HTTPException(401, "Usuário não encontrado ou inativo")
     return user
+
+
+def get_current_tenant_id(
+    user: Annotated[Usuario, Depends(get_current_user)],
+    x_tenant_id: Annotated[int | None, Header(alias="X-Tenant-Id")] = None,
+) -> int:
+    """Resolve tenant atual.
+
+    Usuário comum → seu tenant_id. Admin global (tenant_id=None) → header
+    X-Tenant-Id obrigatório. Falta de tenant_id em qualquer caminho é 400.
+    """
+    if user.tenant_id is not None:
+        return user.tenant_id
+    if x_tenant_id is None:
+        raise HTTPException(
+            400, "Admin global precisa especificar X-Tenant-Id no header"
+        )
+    return x_tenant_id
 
 
 def require_role(*allowed: str):

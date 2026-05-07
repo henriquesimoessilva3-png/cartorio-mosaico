@@ -1,7 +1,7 @@
 from datetime import datetime
 from enum import Enum
 
-from sqlalchemy import DateTime, Numeric, String, Text, func
+from sqlalchemy import DateTime, ForeignKey, Numeric, String, Text, UniqueConstraint, func
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.db.base import Base
@@ -16,9 +16,11 @@ class StatusGeometria(str, Enum):
 
 class Matricula(Base):
     __tablename__ = "matricula"
+    __table_args__ = (UniqueConstraint("tenant_id", "numero", name="uq_matricula_tenant_numero"),)
 
     id: Mapped[int] = mapped_column(primary_key=True)
-    numero: Mapped[str] = mapped_column(String(64), unique=True, index=True)
+    tenant_id: Mapped[int] = mapped_column(ForeignKey("tenant.id"), index=True)
+    numero: Mapped[str] = mapped_column(String(64), index=True)
     livro_folha: Mapped[str | None] = mapped_column(String(64))
     ano_abertura: Mapped[int | None]
 

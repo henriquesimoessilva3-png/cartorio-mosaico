@@ -6,12 +6,18 @@ def render_croqui_svg(
     coords_utm: list[tuple[float, float]],
     width: int = 620,
     height: int = 400,
+    pad: int = 36,
+    marker_size: int = 5,
+    font_size: int = 11,
 ) -> str:
-    """SVG simples do polígono em UTM com marcos numerados e bússola N."""
+    """SVG simples do polígono em UTM com marcos numerados e bússola N.
+
+    Todos os parâmetros visuais são configuráveis pelo caller (UI/API) — o
+    endpoint do memorial faz clamp dos valores para evitar marcos invisíveis.
+    """
     if not coords_utm:
         return ""
 
-    pad = 36
     min_e = min(c[0] for c in coords_utm)
     max_e = max(c[0] for c in coords_utm)
     min_n = min(c[1] for c in coords_utm)
@@ -32,18 +38,19 @@ def render_croqui_svg(
         'stroke="#ff6b35" stroke-width="2"/>',
     ]
 
+    label_offset = max(font_size - 2, 4)
     for i, c in enumerate(coords_utm):
         x, y = t(*c)
         parts.append(
-            f'<circle cx="{x:.1f}" cy="{y:.1f}" r="5" fill="#fff" '
+            f'<circle cx="{x:.1f}" cy="{y:.1f}" r="{marker_size}" fill="#fff" '
             'stroke="#ff6b35" stroke-width="2"/>'
         )
         parts.append(
-            f'<text x="{x + 9:.1f}" y="{y - 9:.1f}" font-size="11" '
-            'font-family="Arial" font-weight="bold">M{}</text>'.format(i)
+            f'<text x="{x + label_offset:.1f}" y="{y - label_offset:.1f}" '
+            f'font-size="{font_size}" font-family="Arial" font-weight="bold">'
+            f'M{i}</text>'
         )
 
-    # Bússola simplificada no canto superior direito
     cx, cy = width - 36, 36
     parts.append(
         f'<g transform="translate({cx},{cy})">'

@@ -14,6 +14,10 @@ concurrency:
   group: pages
   cancel-in-progress: false
 
+# Por enquanto publica o protótipo HTML standalone (zero infra).
+# Quando migrar pro deploy do React V0.5 (Pages + Render + Supabase),
+# trocar `path: prototype` pelo job de build do frontend — receita em
+# docs/DEPLOY-FREE.md.
 jobs:
   deploy:
     environment:
