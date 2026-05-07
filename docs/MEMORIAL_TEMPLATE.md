@@ -2,8 +2,8 @@
 
 ## Status
 
-**Pendente: anexar 1 memorial descritivo real do acervo do cartório** em
-`/Users/henriquesimoessilva/Meu Drive/arquivos pessoais/Projeto Memorial Descritivo Google Maps/`
+**Pendente: anexar 1 memorial descritivo real do acervo do cartório**
+(arquivo em pasta de docs do projeto, fora do repo).
 
 Enquanto não houver modelo real, o gerador usa o **padrão genérico Brasil** descrito abaixo.
 Quando o modelo real chegar, ajusta-se apenas `templates/memorial_descritivo.html.j2`

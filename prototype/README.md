@@ -4,13 +4,14 @@ Um único arquivo HTML autônomo para validar o conceito sem precisar subir back
 
 ## Como abrir
 
-Duplo clique no `index.html`, ou no terminal:
+Versão online (GitHub Pages):
+**https://henriquesimoessilva3-png.github.io/cartorio-mosaico/**
+
+Localmente — duplo clique no `index.html`, ou no terminal:
 
 ```bash
-open ~/projetos/cartorio-mosaico/prototype/index.html
+open prototype/index.html
 ```
-
-Uma cópia também fica em `Projeto Memorial Descritivo Google Maps/prototipo.html` (no Drive) para acesso fácil pelo Finder.
 
 ## O que faz
 

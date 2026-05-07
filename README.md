@@ -2,17 +2,16 @@
 
 Cadastro técnico para reconstrução geométrica de matrículas de cartório com descrição precária. Localiza imóveis sobre imagem de satélite, gera memorial descritivo auxiliar e monta mosaico topológico da circunscrição (detecta sobreposições e gaps entre matrículas vizinhas).
 
+## Demo (protótipo)
+
+Protótipo HTML rodando em GitHub Pages:
+**https://henriquesimoessilva3-png.github.io/cartorio-mosaico/**
+
+Funciona sem backend — desenhe um lote sobre satélite, veja área/perímetro/azimutes em SIRGAS 2000 / UTM 23S, gere o memorial descritivo e imprima/salve em PDF pelo navegador.
+
 ## Status
 
-V0 — scaffold. Componentes implementados: estrutura de pastas, schema PostGIS via Alembic, esqueleto FastAPI.
-
-Plano técnico completo: `~/.claude/plans/quero-criar-um-servico-deep-beacon.md`
-
-## Documentos do projeto (não-código)
-
-`/Users/henriquesimoessilva/Meu Drive/arquivos pessoais/Projeto Memorial Descritivo Google Maps/`
-
-Use essa pasta para anexar memoriais descritivos reais do acervo, briefings, propostas. **Não colocar código lá** — Drive sincronizando node_modules estoura cota.
+V0 — scaffold + protótipo + API CRUD. Componentes implementados: estrutura de pastas, schema PostGIS via Alembic, FastAPI com CRUD de matrículas, importador CSV, protótipo HTML autônomo.
 
 ## Stack
 
