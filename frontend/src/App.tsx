@@ -2,13 +2,22 @@ import { useEffect, useRef, useState } from "react";
 import maplibregl, { type Map as MlMap, type MapMouseEvent } from "maplibre-gl";
 
 import {
+  baixarMemorialPdf,
+  buscarConflitos,
   buscarMosaico,
   criarLote,
   criarMatricula,
+  getToken,
   healthCheck,
   listarMatriculas,
-  memorialPdfUrl,
+  login as apiLogin,
+  logout as apiLogout,
+  lotesPorMatricula,
+  me as apiMe,
+  type Conflito,
+  type Lote,
   type Matricula,
+  type User,
 } from "./api/client";
 import {
   computeArea,
@@ -21,14 +30,14 @@ const FERROS_CENTER: LonLat = [-43.022, -19.234];
 
 const BASEMAPS = {
   esri: {
-    label: "Satélite (Esri)",
+    label: "Satélite",
     tiles: [
       "https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}",
     ],
     attribution: "Tiles © Esri",
   },
   osm: {
-    label: "Mapa (OSM)",
+    label: "Mapa OSM",
     tiles: [
       "https://a.tile.openstreetmap.org/{z}/{x}/{y}.png",
       "https://b.tile.openstreetmap.org/{z}/{x}/{y}.png",
@@ -38,44 +47,125 @@ const BASEMAPS = {
   },
 } as const;
 
-type ApiStatus = "checking" | "ok" | "error";
 type FormState = {
   numero: string;
   proprietario_atual_nome: string;
   endereco_logradouro: string;
   area_descrita_texto: string;
-  comarca: string;
 };
 const EMPTY_FORM: FormState = {
   numero: "",
   proprietario_atual_nome: "",
   endereco_logradouro: "",
   area_descrita_texto: "",
-  comarca: "Ferros",
 };
 
 export default function App() {
+  const [user, setUser] = useState<User | null>(null);
+  const [authChecking, setAuthChecking] = useState(true);
+
+  useEffect(() => {
+    if (!getToken()) {
+      setAuthChecking(false);
+      return;
+    }
+    apiMe()
+      .then((u) => {
+        setUser(u);
+        setAuthChecking(false);
+      })
+      .catch(() => {
+        setAuthChecking(false);
+      });
+  }, []);
+
+  if (authChecking) {
+    return <div className="full-center">Verificando sessão…</div>;
+  }
+  if (!user) {
+    return <LoginScreen onLogin={setUser} />;
+  }
+  return <Editor user={user} onLogout={() => { apiLogout(); setUser(null); }} />;
+}
+
+function LoginScreen({ onLogin }: { onLogin: (u: User) => void }) {
+  const [email, setEmail] = useState("");
+  const [password, setPassword] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState<string | null>(null);
+
+  async function handle(e: React.FormEvent) {
+    e.preventDefault();
+    setBusy(true);
+    setErr(null);
+    try {
+      const { user } = await apiLogin(email, password);
+      onLogin(user);
+    } catch (ex) {
+      setErr(String(ex));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <div className="full-center">
+      <form onSubmit={handle} className="login-card">
+        <h1>Cartório Mosaico</h1>
+        <p className="muted">Entre para acessar o sistema.</p>
+        <label>
+          Email
+          <input
+            type="email"
+            value={email}
+            onChange={(e) => setEmail(e.target.value)}
+            required
+            autoFocus
+          />
+        </label>
+        <label>
+          Senha
+          <input
+            type="password"
+            value={password}
+            onChange={(e) => setPassword(e.target.value)}
+            required
+          />
+        </label>
+        {err && <div className="err">{err}</div>}
+        <button type="submit" disabled={busy} className="primary">
+          {busy ? "Entrando…" : "Entrar"}
+        </button>
+        <p className="muted small">
+          Sem usuário? Rode <code>scripts/create_admin.py</code> no servidor.
+        </p>
+      </form>
+    </div>
+  );
+}
+
+function Editor({ user, onLogout }: { user: User; onLogout: () => void }) {
   const mapDiv = useRef<HTMLDivElement>(null);
   const mapRef = useRef<MlMap | null>(null);
   const dragRef = useRef<{ idx: number } | null>(null);
 
-  const [apiStatus, setApiStatus] = useState<ApiStatus>("checking");
+  const [apiOk, setApiOk] = useState<boolean | null>(null);
   const [vertices, setVertices] = useState<LonLat[]>([]);
   const [drawing, setDrawing] = useState(false);
   const [matriculas, setMatriculas] = useState<Matricula[]>([]);
   const [form, setForm] = useState<FormState>(EMPTY_FORM);
   const [saving, setSaving] = useState(false);
   const [lastLoteId, setLastLoteId] = useState<number | null>(null);
+  const [history, setHistory] = useState<Lote[]>([]);
+  const [conflitosOpen, setConflitosOpen] = useState(false);
+  const [conflitos, setConflitos] = useState<Conflito[]>([]);
+  const [conflitosLoading, setConflitosLoading] = useState(false);
 
-  // Refs to read latest state inside MapLibre handlers
   const stateRef = useRef({ vertices, drawing });
   stateRef.current = { vertices, drawing };
 
-  // Carrega health + matriculas
   useEffect(() => {
-    healthCheck()
-      .then(() => setApiStatus("ok"))
-      .catch(() => setApiStatus("error"));
+    healthCheck().then(() => setApiOk(true)).catch(() => setApiOk(false));
     refreshMatriculas();
   }, []);
 
@@ -84,6 +174,16 @@ export default function App() {
       .then(setMatriculas)
       .catch(() => setMatriculas([]));
   }
+
+  // Carrega histórico ao mudar número de matrícula no form
+  useEffect(() => {
+    const m = matriculas.find((x) => x.numero === form.numero);
+    if (!m) {
+      setHistory([]);
+      return;
+    }
+    lotesPorMatricula(m.id).then(setHistory).catch(() => setHistory([]));
+  }, [form.numero, matriculas]);
 
   // Setup do mapa (uma vez)
   useEffect(() => {
@@ -112,6 +212,36 @@ export default function App() {
     map.addControl(new maplibregl.ScaleControl({ maxWidth: 120, unit: "metric" }));
 
     map.on("load", () => {
+      map.addSource("mosaico", {
+        type: "geojson",
+        data: { type: "FeatureCollection", features: [] },
+      });
+      map.addLayer({
+        id: "mosaico-fill",
+        type: "fill",
+        source: "mosaico",
+        paint: {
+          "fill-color": [
+            "match",
+            ["get", "status"],
+            "validado_art",
+            "#2ecc71",
+            "revisado",
+            "#3498db",
+            "rascunho",
+            "#f39c12",
+            "#bdc3c7",
+          ],
+          "fill-opacity": 0.25,
+        },
+      });
+      map.addLayer({
+        id: "mosaico-line",
+        type: "line",
+        source: "mosaico",
+        paint: { "line-color": "#3498db", "line-width": 1.6 },
+      });
+
       map.addSource("lote", {
         type: "geojson",
         data: { type: "FeatureCollection", features: [] },
@@ -120,7 +250,7 @@ export default function App() {
         id: "lote-fill",
         type: "fill",
         source: "lote",
-        paint: { "fill-color": "#ff6b35", "fill-opacity": 0.35 },
+        paint: { "fill-color": "#ff6b35", "fill-opacity": 0.4 },
       });
       map.addLayer({
         id: "lote-line",
@@ -159,33 +289,6 @@ export default function App() {
           "text-halo-width": 1.5,
         },
       });
-      // Mosaico — lotes salvos
-      map.addSource("mosaico", {
-        type: "geojson",
-        data: { type: "FeatureCollection", features: [] },
-      });
-      map.addLayer(
-        {
-          id: "mosaico-fill",
-          type: "fill",
-          source: "mosaico",
-          paint: { "fill-color": "#3399ff", "fill-opacity": 0.2 },
-        },
-        "lote-fill",
-      );
-      map.addLayer(
-        {
-          id: "mosaico-line",
-          type: "line",
-          source: "mosaico",
-          paint: {
-            "line-color": "#3399ff",
-            "line-width": 1.6,
-            "line-dasharray": [2, 2],
-          },
-        },
-        "lote-line",
-      );
 
       loadMosaico();
     });
@@ -195,7 +298,6 @@ export default function App() {
       setVertices((prev) => [...prev, [e.lngLat.lng, e.lngLat.lat]]);
     });
 
-    // Hover/drag em vértice
     map.on("mouseenter", "vertices-pt", () => {
       if (stateRef.current.drawing || dragRef.current) return;
       map.getCanvas().style.cursor = "grab";
@@ -233,14 +335,11 @@ export default function App() {
     };
   }, []);
 
-  // Atualiza source do polígono ao mudar vertices
   useEffect(() => {
     const map = mapRef.current;
     if (!map || !map.getSource("lote")) return;
-
     const src = map.getSource("lote") as maplibregl.GeoJSONSource;
     const vsrc = map.getSource("vertices-src") as maplibregl.GeoJSONSource;
-
     if (vertices.length === 0) {
       src.setData({ type: "FeatureCollection", features: [] });
       vsrc.setData({ type: "FeatureCollection", features: [] });
@@ -248,10 +347,7 @@ export default function App() {
     }
     let geom: GeoJSON.Geometry | null;
     if (vertices.length >= 3) {
-      geom = {
-        type: "Polygon",
-        coordinates: [[...vertices, vertices[0]]],
-      };
+      geom = { type: "Polygon", coordinates: [[...vertices, vertices[0]]] };
     } else if (vertices.length === 2) {
       geom = { type: "LineString", coordinates: vertices };
     } else {
@@ -272,7 +368,6 @@ export default function App() {
     });
   }, [vertices]);
 
-  // Cursor em modo desenho
   useEffect(() => {
     const map = mapRef.current;
     if (!map) return;
@@ -291,23 +386,19 @@ export default function App() {
   }
 
   async function handleSearchAddress() {
-    const q = (document.getElementById("search-input") as HTMLInputElement)
-      ?.value;
+    const q = (document.getElementById("search-input") as HTMLInputElement)?.value;
     if (!q) return;
     try {
       const res = await fetch(
         `https://nominatim.openstreetmap.org/search?format=json&limit=1&q=${encodeURIComponent(q)}`,
       );
-      const data: Array<{ lat: string; lon: string; display_name: string }> =
-        await res.json();
+      const data: Array<{ lat: string; lon: string }> = await res.json();
       if (!data.length) return;
       mapRef.current?.flyTo({
         center: [parseFloat(data[0].lon), parseFloat(data[0].lat)],
         zoom: 18,
       });
-    } catch {
-      /* ignore */
-    }
+    } catch { /* ignore */ }
   }
 
   async function handleSave() {
@@ -337,7 +428,7 @@ export default function App() {
       refreshMatriculas();
       loadMosaico();
       alert(
-        `Salvo. Matrícula ${matricula.numero} — Lote #${lote.id} (área ${(
+        `Salvo. Matrícula ${matricula.numero} — Lote #${lote.id} v${lote.versao} (área ${(
           lote.area_calculada_m2 ?? 0
         ).toFixed(2)} m²)`,
       );
@@ -348,25 +439,46 @@ export default function App() {
     }
   }
 
-  function handleStart() {
-    setVertices([]);
-    setDrawing(true);
-    setLastLoteId(null);
-  }
-  function handleFinish() {
-    if (vertices.length < 3) {
-      alert("Mínimo 3 vértices");
-      return;
+  async function handleConflitos() {
+    setConflitosOpen(true);
+    setConflitosLoading(true);
+    try {
+      const r = await buscarConflitos();
+      setConflitos(r.overlaps);
+    } catch (e) {
+      alert(`Erro: ${e}`);
+    } finally {
+      setConflitosLoading(false);
     }
-    setDrawing(false);
   }
-  function handleClear() {
-    setVertices([]);
-    setDrawing(false);
-    setLastLoteId(null);
+
+  async function handleBaixarPdf(loteId: number) {
+    try {
+      const blob = await baixarMemorialPdf(loteId);
+      const url = URL.createObjectURL(blob);
+      window.open(url, "_blank");
+      setTimeout(() => URL.revokeObjectURL(url), 60_000);
+    } catch (e) {
+      alert(`Erro: ${e}`);
+    }
   }
-  function handleUndo() {
-    setVertices((prev) => prev.slice(0, -1));
+
+  function loadVersionToEditor(lote: Lote) {
+    if (!lote.vertices_jsonb) return;
+    const vs: LonLat[] = lote.vertices_jsonb.map((v) => [v.lon, v.lat]);
+    setVertices(vs);
+    setDrawing(false);
+    if (vs.length) {
+      const lons = vs.map((v) => v[0]);
+      const lats = vs.map((v) => v[1]);
+      mapRef.current?.fitBounds(
+        [
+          [Math.min(...lons), Math.min(...lats)],
+          [Math.max(...lons), Math.max(...lats)],
+        ],
+        { padding: 60, maxZoom: 19 },
+      );
+    }
   }
 
   const sides = vertices.length >= 3 ? computeSides(vertices) : [];
@@ -377,14 +489,15 @@ export default function App() {
     <div className="app">
       <header>
         <h1>Cartório Mosaico</h1>
-        <span className={`status status-${apiStatus}`}>
-          API:{" "}
-          {apiStatus === "checking"
-            ? "..."
-            : apiStatus === "ok"
-              ? "online"
-              : "offline (rode o backend)"}
-        </span>
+        <div className="header-right">
+          <span className={`status ${apiOk === true ? "status-ok" : apiOk === false ? "status-error" : "status-checking"}`}>
+            API: {apiOk === true ? "online" : apiOk === false ? "offline" : "..."}
+          </span>
+          <span className="user-chip">
+            {user.nome} <small>({user.role})</small>
+          </span>
+          <button onClick={onLogout} className="link-btn">Sair</button>
+        </div>
       </header>
       <div className="layout">
         <aside className="panel">
@@ -406,18 +519,14 @@ export default function App() {
             Proprietário(a)
             <input
               value={form.proprietario_atual_nome}
-              onChange={(e) =>
-                setForm({ ...form, proprietario_atual_nome: e.target.value })
-              }
+              onChange={(e) => setForm({ ...form, proprietario_atual_nome: e.target.value })}
             />
           </label>
           <label>
             Endereço
             <input
               value={form.endereco_logradouro}
-              onChange={(e) =>
-                setForm({ ...form, endereco_logradouro: e.target.value })
-              }
+              onChange={(e) => setForm({ ...form, endereco_logradouro: e.target.value })}
             />
           </label>
           <label>
@@ -425,58 +534,66 @@ export default function App() {
             <textarea
               rows={3}
               value={form.area_descrita_texto}
-              onChange={(e) =>
-                setForm({ ...form, area_descrita_texto: e.target.value })
-              }
+              onChange={(e) => setForm({ ...form, area_descrita_texto: e.target.value })}
             />
           </label>
 
+          {history.length > 0 && (
+            <>
+              <h2>Histórico de versões</h2>
+              <ul className="history">
+                {history.map((h) => (
+                  <li key={h.id}>
+                    <span>
+                      <strong>v{h.versao}</strong>{" "}
+                      <small>{new Date(h.criado_em).toLocaleString("pt-BR")}</small>
+                      <br />
+                      <small>
+                        {(h.area_calculada_m2 ?? 0).toFixed(2)} m² ·{" "}
+                        {(h.perimetro_m ?? 0).toFixed(2)} m
+                      </small>
+                    </span>
+                    <span>
+                      <button onClick={() => loadVersionToEditor(h)}>Carregar</button>
+                      <button onClick={() => handleBaixarPdf(h.id)}>PDF</button>
+                    </span>
+                  </li>
+                ))}
+              </ul>
+            </>
+          )}
+
           <h2>Desenho do lote</h2>
           <div>
-            <button onClick={handleStart} disabled={drawing}>
-              Iniciar desenho
+            <button onClick={() => { setVertices([]); setDrawing(true); setLastLoteId(null); }} disabled={drawing}>
+              Iniciar
             </button>
-            <button onClick={handleFinish} disabled={!drawing}>
+            <button onClick={() => { if (vertices.length < 3) { alert("Mínimo 3"); return; } setDrawing(false); }} disabled={!drawing}>
               Finalizar
             </button>
-            <button onClick={handleUndo} disabled={vertices.length === 0}>
+            <button onClick={() => setVertices((p) => p.slice(0, -1))} disabled={vertices.length === 0}>
               Desfazer
             </button>
-            <button onClick={handleClear} className="danger">
+            <button onClick={() => { setVertices([]); setDrawing(false); setLastLoteId(null); }} className="danger">
               Limpar
             </button>
           </div>
 
           <h2>Métricas</h2>
           <dl>
-            <dt>Vértices</dt>
-            <dd>{vertices.length}</dd>
+            <dt>Vértices</dt><dd>{vertices.length}</dd>
             <dt>Área</dt>
-            <dd>
-              {vertices.length >= 3
-                ? `${areaM2.toFixed(2)} m² (${(areaM2 / 10000).toFixed(4)} ha)`
-                : "—"}
-            </dd>
+            <dd>{vertices.length >= 3 ? `${areaM2.toFixed(2)} m² (${(areaM2 / 10000).toFixed(4)} ha)` : "—"}</dd>
             <dt>Perímetro</dt>
-            <dd>
-              {vertices.length >= 3 ? `${perimM.toFixed(2)} m` : "—"}
-            </dd>
+            <dd>{vertices.length >= 3 ? `${perimM.toFixed(2)} m` : "—"}</dd>
           </dl>
           {sides.length > 0 && (
             <table>
-              <thead>
-                <tr>
-                  <th>Lado</th>
-                  <th>Distância</th>
-                  <th>Azimute</th>
-                </tr>
-              </thead>
+              <thead><tr><th>Lado</th><th>Distância</th><th>Azimute</th></tr></thead>
               <tbody>
                 {sides.map((s) => (
                   <tr key={`${s.from}-${s.to}`}>
-                    <td>
-                      M{s.from}→M{s.to}
-                    </td>
+                    <td>M{s.from}→M{s.to}</td>
                     <td>{s.distM.toFixed(2)} m</td>
                     <td>{s.azDms}</td>
                   </tr>
@@ -495,29 +612,30 @@ export default function App() {
           </button>
           {lastLoteId !== null && (
             <p style={{ marginTop: 8 }}>
-              <a
-                href={memorialPdfUrl(lastLoteId)}
-                target="_blank"
-                rel="noopener"
-              >
+              <button onClick={() => handleBaixarPdf(lastLoteId)}>
                 Baixar memorial PDF do lote #{lastLoteId}
-              </a>
+              </button>
             </p>
           )}
 
-          <h2>Matrículas no banco</h2>
+          <h2>Mosaico da circunscrição</h2>
+          <div>
+            <button onClick={loadMosaico}>Recarregar mosaico</button>
+            <button onClick={handleConflitos}>Detectar conflitos</button>
+          </div>
+          <p className="muted small">
+            Cores no mapa: cinza = rascunho, azul = revisado, verde = validado ART
+          </p>
+
+          <h2>Matrículas no banco ({matriculas.length})</h2>
           {matriculas.length === 0 ? (
-            <p style={{ color: "#888", fontSize: 13 }}>
-              — nenhuma matrícula —
-            </p>
+            <p style={{ color: "#888", fontSize: 13 }}>— nenhuma —</p>
           ) : (
             <ul className="matriculas-list">
-              {matriculas.slice(0, 20).map((m) => (
-                <li key={m.id}>
+              {matriculas.slice(0, 50).map((m) => (
+                <li key={m.id} onClick={() => setForm({ ...form, numero: m.numero })}>
                   <strong>{m.numero}</strong>
-                  {m.proprietario_atual_nome
-                    ? ` — ${m.proprietario_atual_nome}`
-                    : ""}
+                  {m.proprietario_atual_nome ? ` — ${m.proprietario_atual_nome}` : ""}
                   <span className={`badge badge-${m.status_geometria}`}>
                     {m.status_geometria}
                   </span>
@@ -528,6 +646,37 @@ export default function App() {
         </aside>
         <div ref={mapDiv} className="map" />
       </div>
+
+      {conflitosOpen && (
+        <div className="dialog-backdrop" onClick={() => setConflitosOpen(false)}>
+          <div className="dialog" onClick={(e) => e.stopPropagation()}>
+            <h2>Conflitos detectados</h2>
+            {conflitosLoading ? (
+              <p>Calculando...</p>
+            ) : conflitos.length === 0 ? (
+              <p className="muted">Nenhuma sobreposição detectada (&gt; 0,5 m²).</p>
+            ) : (
+              <table>
+                <thead>
+                  <tr><th>Lote A</th><th>Lote B</th><th>Sobreposição</th></tr>
+                </thead>
+                <tbody>
+                  {conflitos.map((c, i) => (
+                    <tr key={i}>
+                      <td>#{c.lote_a} (mat {c.matricula_a})</td>
+                      <td>#{c.lote_b} (mat {c.matricula_b})</td>
+                      <td>{c.area_overlap_m2.toFixed(2)} m²</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            )}
+            <div style={{ textAlign: "right", marginTop: 12 }}>
+              <button onClick={() => setConflitosOpen(false)}>Fechar</button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

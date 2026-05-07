@@ -1,9 +1,84 @@
 const BASE = (import.meta.env.VITE_API_BASE as string | undefined) ?? "";
 
-export async function healthCheck(): Promise<{ status: string }> {
-  const r = await fetch(`${BASE}/health`);
-  if (!r.ok) throw new Error(`API ${r.status}`);
+const TOKEN_KEY = "cartorio-mosaico-token";
+
+let _token: string | null = localStorage.getItem(TOKEN_KEY);
+
+export function getToken(): string | null {
+  return _token;
+}
+
+export function setToken(token: string | null): void {
+  _token = token;
+  if (token) localStorage.setItem(TOKEN_KEY, token);
+  else localStorage.removeItem(TOKEN_KEY);
+}
+
+function authHeaders(): Record<string, string> {
+  return _token ? { Authorization: `Bearer ${_token}` } : {};
+}
+
+async function request<T>(
+  path: string,
+  init: RequestInit = {},
+): Promise<T> {
+  const r = await fetch(`${BASE}${path}`, {
+    ...init,
+    headers: {
+      ...(init.body ? { "Content-Type": "application/json" } : {}),
+      ...authHeaders(),
+      ...(init.headers as Record<string, string> | undefined),
+    },
+  });
+  if (r.status === 401) {
+    setToken(null);
+    throw new Error("Não autenticado (401)");
+  }
+  if (!r.ok) {
+    const text = await r.text().catch(() => "");
+    throw new Error(`${r.status}: ${text || r.statusText}`);
+  }
+  if (r.status === 204) return undefined as T;
   return r.json();
+}
+
+export interface User {
+  id: number;
+  nome: string;
+  email: string;
+  role: string;
+  ativo: boolean;
+}
+
+export async function healthCheck(): Promise<{ status: string }> {
+  return request("/health");
+}
+
+export async function login(
+  email: string,
+  password: string,
+): Promise<{ token: string; user: User }> {
+  const form = new URLSearchParams();
+  form.set("username", email);
+  form.set("password", password);
+  const r = await fetch(`${BASE}/api/auth/login`, {
+    method: "POST",
+    headers: { "Content-Type": "application/x-www-form-urlencoded" },
+    body: form,
+  });
+  if (!r.ok) throw new Error("Credenciais inválidas");
+  const { access_token } = (await r.json()) as { access_token: string };
+  setToken(access_token);
+  const user = await me();
+  return { token: access_token, user };
+}
+
+export async function me(): Promise<User> {
+  return request("/api/auth/me");
+}
+
+export function logout(): void {
+  setToken(null);
 }
 
 export interface Matricula {
@@ -16,22 +91,36 @@ export interface Matricula {
   area_descrita_m2: number | null;
 }
 
-export async function listarMatriculas(): Promise<Matricula[]> {
-  const r = await fetch(`${BASE}/api/matriculas`);
-  if (!r.ok) throw new Error(`Listar matrículas: ${r.status}`);
-  return r.json();
+export interface MatriculaCreate {
+  numero: string;
+  proprietario_atual_nome?: string | null;
+  endereco_logradouro?: string | null;
+  area_descrita_texto?: string | null;
+  cpf_cnpj?: string | null;
 }
 
-export async function criarMatricula(
-  payload: Partial<Matricula> & { numero: string },
-): Promise<Matricula> {
-  const r = await fetch(`${BASE}/api/matriculas`, {
+export async function listarMatriculas(): Promise<Matricula[]> {
+  return request("/api/matriculas");
+}
+
+export async function criarMatricula(payload: MatriculaCreate): Promise<Matricula> {
+  return request("/api/matriculas", {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
     body: JSON.stringify(payload),
   });
-  if (!r.ok) throw new Error(`Criar matrícula: ${r.status}`);
-  return r.json();
+}
+
+export interface Lote {
+  id: number;
+  matricula_id: number;
+  versao: number;
+  area_calculada_m2: number | null;
+  perimetro_m: number | null;
+  vertices_jsonb: Array<{ marco: string; e_utm: number; n_utm: number; lat: number; lon: number }> | null;
+  azimutes_jsonb: Array<Record<string, unknown>> | null;
+  notas_validacao: string | null;
+  hash_documento: string | null;
+  criado_em: string;
 }
 
 export interface LoteCreate {
@@ -40,22 +129,44 @@ export interface LoteCreate {
   notas_validacao?: string;
 }
 
-export async function criarLote(payload: LoteCreate) {
-  const r = await fetch(`${BASE}/api/lotes`, {
+export async function criarLote(payload: LoteCreate): Promise<Lote> {
+  return request("/api/lotes", {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
     body: JSON.stringify(payload),
   });
-  if (!r.ok) throw new Error(`Criar lote: ${r.status}`);
-  return r.json();
 }
 
-export function memorialPdfUrl(loteId: number): string {
-  return `${BASE}/api/memoriais/${loteId}.pdf`;
+export async function lotesPorMatricula(matriculaId: number): Promise<Lote[]> {
+  return request(`/api/lotes/por-matricula/${matriculaId}`);
+}
+
+export interface Conflito {
+  lote_a: number;
+  matricula_a: number;
+  lote_b: number;
+  matricula_b: number;
+  area_overlap_m2: number;
 }
 
 export async function buscarMosaico(): Promise<GeoJSON.FeatureCollection> {
-  const r = await fetch(`${BASE}/api/mosaico`);
-  if (!r.ok) throw new Error(`Mosaico: ${r.status}`);
-  return r.json();
+  return request("/api/mosaico");
+}
+
+export async function buscarConflitos(): Promise<{ overlaps: Conflito[] }> {
+  return request("/api/mosaico/conflitos");
+}
+
+export function memorialPdfUrl(loteId: number): string {
+  // Token via query string para download direto via <a href>
+  const params = _token ? `?token=${encodeURIComponent(_token)}` : "";
+  return `${BASE}/api/memoriais/${loteId}.pdf${params}`;
+}
+
+// Helper: download PDF authenticated via fetch (workaround para token em header)
+export async function baixarMemorialPdf(loteId: number): Promise<Blob> {
+  const r = await fetch(`${BASE}/api/memoriais/${loteId}.pdf`, {
+    headers: authHeaders(),
+  });
+  if (!r.ok) throw new Error(`PDF: ${r.status}`);
+  return r.blob();
 }
