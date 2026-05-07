@@ -299,31 +299,34 @@ map.on("load", () => {
 // ─────────────────────────────────────────────────────────────────
 map.on("click", (e) => {
   if (!drawing) return;
+  // Se clicou em cima de um vértice existente, drag handler assume — não duplica.
+  const hits = map.queryRenderedFeatures(e.point, { layers: ["vertices-pt"] });
+  if (hits.length > 0) return;
   vertices.push([e.lngLat.lng, e.lngLat.lat]);
   redraw();
   updateMetrics();
 });
 
 // ─────────────────────────────────────────────────────────────────
-// Arrastar vértices (após polígono fechado)
+// Arrastar vértices — funciona durante e depois do desenho
 // ─────────────────────────────────────────────────────────────────
 let dragging = null; // { idx } quando arrastando
 
 map.on("mouseenter", "vertices-pt", () => {
-  if (drawing || dragging) return;
+  if (dragging) return;
   map.getCanvas().style.cursor = "grab";
 });
 map.on("mouseleave", "vertices-pt", () => {
-  if (drawing || dragging) return;
-  map.getCanvas().style.cursor = "";
+  if (dragging) return;
+  map.getCanvas().style.cursor = drawing ? "crosshair" : "";
 });
 
 map.on("mousedown", "vertices-pt", (e) => {
-  if (drawing) return;
   e.preventDefault();
   const idx = e.features[0].properties.idx;
   dragging = { idx };
   map.getCanvas().style.cursor = "grabbing";
+  map.dragPan.disable();
 });
 
 map.on("mousemove", (e) => {
@@ -337,14 +340,16 @@ map.on("mouseup", () => {
   if (!dragging) return;
   dragging = null;
   map.getCanvas().style.cursor = "";
+  map.dragPan.enable();
 });
 
 // Suporte touch (celular/tablet)
 map.on("touchstart", "vertices-pt", (e) => {
-  if (drawing || e.points.length !== 1) return;
+  if (e.points.length !== 1) return;
   e.preventDefault();
   const idx = e.features[0].properties.idx;
   dragging = { idx };
+  map.dragPan.disable();
 });
 map.on("touchmove", (e) => {
   if (!dragging || e.points.length !== 1) return;
@@ -356,6 +361,7 @@ map.on("touchmove", (e) => {
 map.on("touchend", () => {
   if (!dragging) return;
   dragging = null;
+  map.dragPan.enable();
 });
 
 function redraw() {
