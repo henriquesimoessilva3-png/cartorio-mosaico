@@ -1,0 +1,5 @@
+numero,livro_folha,ano_abertura,proprietario_atual_nome,cpf_cnpj,endereco_logradouro,endereco_numero,endereco_complemento,endereco_bairro,area_descrita_texto,area_descrita_m2,observacoes
+12345,L2/F45,1972,João da Silva,123.456.789-09,Rua Fernando Dias de Carvalho,47,,Centro,"12m de frente por 30m de fundo, dividindo pela frente com Rua publica, fundos com Beltrano, direita com Sicrano, esquerda com XXX",,Descrição precária — pendente de mapeamento
+12346,L2/F46,1973,Maria Souza,98.765.432/0001-09,Rua Tiradentes,12,,Centro,Lote retangular medindo 10m x 25m,250,Imóvel com edificação em alvenaria
+12347,L3/F02,1985,Carlos Pereira,,Avenida Brasil,200,Bloco A,Centro,Lote irregular medindo aproximadamente 18m de frente,,Sem CPF informado
+12348,L3/F88,1990,Ana Lima,111.222.333-44,Rua das Flores,55,Casa,São José,"15m × 40m, fundos com córrego",600,
