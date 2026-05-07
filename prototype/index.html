@@ -1,0 +1,599 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Cartório Mosaico — Protótipo</title>
+<link rel="stylesheet" href="https://unpkg.com/maplibre-gl@4.7.1/dist/maplibre-gl.css">
+<style>
+  * { box-sizing: border-box; }
+  html, body { margin: 0; padding: 0; height: 100%; }
+  body { font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; color: #222; }
+
+  header { padding: 10px 20px; border-bottom: 1px solid #ddd; background: #fafafa; display: flex; align-items: baseline; gap: 16px; }
+  header h1 { margin: 0; font-size: 17px; }
+  header p { margin: 0; font-size: 12px; color: #666; }
+
+  .layout { display: grid; grid-template-columns: 380px 1fr; height: calc(100vh - 49px); }
+  .panel { padding: 14px 16px; overflow-y: auto; border-right: 1px solid #ddd; background: #fff; }
+  .panel h2 { font-size: 11px; margin: 18px 0 8px; text-transform: uppercase; color: #666; letter-spacing: 0.6px; font-weight: 700; }
+  .panel h2:first-child { margin-top: 0; }
+  .panel h3 { font-size: 12px; margin: 12px 0 4px; color: #555; }
+  .panel label { display: block; margin: 6px 0; font-size: 12px; color: #444; }
+  .panel input, .panel textarea { width: 100%; padding: 6px 8px; border: 1px solid #ccc; border-radius: 4px; font: inherit; font-size: 13px; margin-top: 2px; }
+  .panel textarea { resize: vertical; }
+  .panel .row { display: flex; gap: 6px; }
+  .panel .row > * { flex: 1; }
+  .panel button { padding: 7px 11px; margin: 3px 3px 3px 0; border: 1px solid #ccc; background: #fff; border-radius: 4px; cursor: pointer; font: inherit; font-size: 13px; }
+  .panel button:hover:not(:disabled) { background: #eee; }
+  .panel button:disabled { opacity: 0.4; cursor: not-allowed; }
+  .panel button.primary { background: #ff6b35; color: #fff; border-color: #ff6b35; font-weight: 600; }
+  .panel button.primary:hover:not(:disabled) { background: #e55a25; }
+  .panel button.danger { color: #c00; }
+
+  #search-row { display: flex; gap: 4px; margin-bottom: 6px; }
+  #search-input { flex: 1; }
+
+  dl#metrics { margin: 0; display: grid; grid-template-columns: auto 1fr; gap: 4px 12px; font-size: 13px; }
+  dl#metrics dt { color: #666; }
+  dl#metrics dd { margin: 0; font-weight: 600; }
+
+  .panel table { width: 100%; border-collapse: collapse; font-size: 11.5px; margin: 6px 0; }
+  .panel th, .panel td { padding: 4px 6px; border-bottom: 1px solid #eee; text-align: right; }
+  .panel th:first-child, .panel td:first-child { text-align: left; }
+  .panel th { background: #f5f5f5; font-weight: 600; }
+
+  ul#saved-list { list-style: none; padding: 0; margin: 0; }
+  #saved-list li { padding: 6px 8px; border-bottom: 1px solid #eee; cursor: pointer; font-size: 13px; display: flex; justify-content: space-between; align-items: center; }
+  #saved-list li:hover { background: #f8f8f8; }
+  #saved-list .del { background: transparent; border: 0; color: #c00; cursor: pointer; padding: 0 6px; font-size: 16px; }
+  #saved-list .meta { font-size: 11px; color: #888; margin-top: 2px; }
+
+  .map { width: 100%; height: 100%; }
+
+  dialog#memorial-dialog { padding: 0; border: 0; border-radius: 8px; max-width: 820px; width: 92vw; max-height: 92vh; box-shadow: 0 10px 40px rgba(0,0,0,0.3); }
+  dialog#memorial-dialog::backdrop { background: rgba(0,0,0,0.4); }
+  dialog#memorial-dialog .toolbar { position: sticky; top: 0; background: #fafafa; padding: 8px 16px; border-bottom: 1px solid #ddd; display: flex; gap: 8px; justify-content: flex-end; z-index: 10; }
+  dialog#memorial-dialog .toolbar button { padding: 6px 12px; font-size: 13px; cursor: pointer; border: 1px solid #ccc; background: #fff; border-radius: 4px; }
+  dialog#memorial-dialog .toolbar button.primary { background: #ff6b35; color: #fff; border-color: #ff6b35; }
+
+  .memorial { padding: 32px 40px; font-family: "Times New Roman", Times, serif; line-height: 1.5; font-size: 11pt; color: #111; }
+  .memorial h1 { font-size: 14pt; text-align: center; margin: 0 0 8px; letter-spacing: 1px; }
+  .memorial h2 { font-size: 12pt; margin: 18px 0 6px; border-bottom: 1px solid #aaa; padding-bottom: 2px; }
+  .memorial table { width: 100%; border-collapse: collapse; font-size: 10pt; }
+  .memorial th, .memorial td { border: 1px solid #333; padding: 4px 6px; text-align: right; }
+  .memorial th { background: #eee; }
+  .memorial .descricao { text-align: justify; text-indent: 2em; }
+  .memorial .small { font-size: 9pt; color: #666; }
+  .memorial .disclaimer { font-size: 9pt; color: #555; border-top: 1px solid #999; margin-top: 18px; padding-top: 8px; }
+  .memorial .cartorio-line { text-align: center; font-style: italic; margin-top: 0; }
+  .memorial .footer-line { text-align: right; font-size: 9pt; color: #888; margin-top: 12px; }
+  .memorial img.croqui { max-width: 100%; border: 1px solid #999; margin-top: 8px; }
+
+  .legend { background: rgba(255,255,255,0.92); padding: 6px 10px; border-radius: 4px; font-size: 12px; box-shadow: 0 1px 3px rgba(0,0,0,0.2); }
+
+  /* Print: only memorial visible */
+  @media print {
+    body > * { display: none !important; }
+    dialog#memorial-dialog { display: block !important; position: static !important; max-width: none !important; width: auto !important; max-height: none !important; box-shadow: none !important; border: 0 !important; }
+    dialog#memorial-dialog .toolbar { display: none !important; }
+    .memorial { padding: 0; }
+    @page { margin: 1.6cm; size: A4; }
+  }
+</style>
+</head>
+<body>
+
+<header>
+  <h1>Cartório Mosaico</h1>
+  <p>Protótipo V0 — desenho de lote sobre satélite e geração de memorial descritivo auxiliar.</p>
+</header>
+
+<main class="layout">
+  <aside class="panel">
+
+    <h2>Buscar endereço</h2>
+    <div id="search-row">
+      <input id="search-input" placeholder="ex: Rua Fernando Dias de Carvalho, Ferros, MG">
+      <button id="btn-search">Ir</button>
+    </div>
+    <div id="search-status" class="meta"></div>
+
+    <h2>Matrícula</h2>
+    <form id="form-matricula">
+      <label>Número
+        <input name="numero" placeholder="ex: 12345">
+      </label>
+      <label>Proprietário(a)
+        <input name="proprietario">
+      </label>
+      <label>Endereço
+        <input name="endereco">
+      </label>
+      <label>Comarca
+        <input name="comarca" value="Ferros">
+      </label>
+      <label>Descrição textual da matrícula
+        <textarea name="descricao_textual" rows="3" placeholder="ex: 12m de frente por 30m de fundo, fundos com Beltrano..."></textarea>
+      </label>
+    </form>
+
+    <h2>Desenho do lote</h2>
+    <div>
+      <button id="btn-start-draw">Iniciar desenho</button>
+      <button id="btn-finish-draw" disabled>Finalizar</button>
+      <button id="btn-undo" disabled>Desfazer último</button>
+      <button id="btn-clear" class="danger">Limpar</button>
+    </div>
+
+    <h2>Métricas</h2>
+    <dl id="metrics">
+      <dt>Vértices</dt><dd id="m-vertices">0</dd>
+      <dt>Área</dt><dd id="m-area">—</dd>
+      <dt>Perímetro</dt><dd id="m-perim">—</dd>
+    </dl>
+
+    <h3>Lados (azimute em SIRGAS 2000 / UTM 23S)</h3>
+    <table id="t-sides">
+      <thead><tr><th>Lado</th><th>Distância</th><th>Azimute</th></tr></thead>
+      <tbody></tbody>
+    </table>
+
+    <h2>Salvar / Memorial</h2>
+    <button id="btn-save">Salvar lote</button>
+    <button id="btn-memorial" class="primary" disabled>Gerar memorial</button>
+
+    <h2>Lotes salvos (neste navegador)</h2>
+    <ul id="saved-list"></ul>
+    <button id="btn-export-all" style="margin-top:8px">Exportar todos (GeoJSON)</button>
+
+  </aside>
+
+  <section id="map" class="map"></section>
+</main>
+
+<dialog id="memorial-dialog">
+  <div class="toolbar">
+    <button id="btn-print" class="primary">Imprimir / Salvar PDF</button>
+    <button id="btn-close-dialog">Fechar</button>
+  </div>
+  <div id="memorial-content"></div>
+</dialog>
+
+<script src="https://unpkg.com/maplibre-gl@4.7.1/dist/maplibre-gl.js"></script>
+<script src="https://unpkg.com/@turf/turf@7.1.0/turf.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/proj4js/2.11.0/proj4.js"></script>
+<script>
+// ─────────────────────────────────────────────────────────────────
+// Configuração geodésica: SIRGAS 2000 (EPSG:4674) + UTM 23S (EPSG:31983)
+// ─────────────────────────────────────────────────────────────────
+proj4.defs("EPSG:4674", "+proj=longlat +ellps=GRS80 +no_defs +type=crs");
+proj4.defs("EPSG:31983", "+proj=utm +zone=23 +south +ellps=GRS80 +towgs84=0,0,0,0,0,0,0 +units=m +no_defs +type=crs");
+
+const FERROS_CENTER = [-43.022, -19.234]; // lon, lat — aprox. centro de Ferros, MG
+
+// ─────────────────────────────────────────────────────────────────
+// Mapa base com Esri World Imagery
+// ─────────────────────────────────────────────────────────────────
+const map = new maplibregl.Map({
+  container: "map",
+  style: {
+    version: 8,
+    sources: {
+      esri: {
+        type: "raster",
+        tiles: [
+          "https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}"
+        ],
+        tileSize: 256,
+        attribution: "Tiles © Esri — Source: Esri, Maxar, Earthstar Geographics, and the GIS User Community"
+      }
+    },
+    layers: [{ id: "esri", type: "raster", source: "esri" }]
+  },
+  center: FERROS_CENTER,
+  zoom: 17,
+  maxZoom: 21
+});
+map.addControl(new maplibregl.NavigationControl());
+map.addControl(new maplibregl.ScaleControl({ maxWidth: 120, unit: "metric" }));
+
+// ─────────────────────────────────────────────────────────────────
+// Estado
+// ─────────────────────────────────────────────────────────────────
+let drawing = false;
+let vertices = []; // [[lon, lat], ...]
+
+// ─────────────────────────────────────────────────────────────────
+// Camadas do polígono
+// ─────────────────────────────────────────────────────────────────
+function ensureLayers() {
+  if (map.getSource("lote")) return;
+  map.addSource("lote", { type: "geojson", data: emptyFC() });
+  map.addLayer({ id: "lote-fill", type: "fill", source: "lote",
+    paint: { "fill-color": "#ff6b35", "fill-opacity": 0.35 } });
+  map.addLayer({ id: "lote-line", type: "line", source: "lote",
+    paint: { "line-color": "#ff6b35", "line-width": 2.5 } });
+  map.addSource("vertices-src", { type: "geojson", data: emptyFC() });
+  map.addLayer({ id: "vertices-pt", type: "circle", source: "vertices-src",
+    paint: { "circle-radius": 6, "circle-color": "#fff",
+             "circle-stroke-color": "#ff6b35", "circle-stroke-width": 2.5 } });
+  map.addLayer({ id: "vertices-label", type: "symbol", source: "vertices-src",
+    layout: { "text-field": ["concat", "M", ["to-string", ["get", "idx"]]],
+              "text-size": 12, "text-offset": [0, -1.4], "text-allow-overlap": true },
+    paint: { "text-color": "#fff", "text-halo-color": "#000", "text-halo-width": 1.5 } });
+
+  // saved lotes layer
+  map.addSource("saved-src", { type: "geojson", data: emptyFC() });
+  map.addLayer({ id: "saved-fill", type: "fill", source: "saved-src",
+    paint: { "fill-color": "#3399ff", "fill-opacity": 0.18 } });
+  map.addLayer({ id: "saved-line", type: "line", source: "saved-src",
+    paint: { "line-color": "#3399ff", "line-width": 1.6, "line-dasharray": [2, 2] } });
+}
+function emptyFC() { return { type: "FeatureCollection", features: [] }; }
+
+map.on("load", () => {
+  ensureLayers();
+  redrawSaved();
+});
+
+// ─────────────────────────────────────────────────────────────────
+// Clique no mapa adiciona vértice
+// ─────────────────────────────────────────────────────────────────
+map.on("click", (e) => {
+  if (!drawing) return;
+  vertices.push([e.lngLat.lng, e.lngLat.lat]);
+  redraw();
+  updateMetrics();
+});
+
+function redraw() {
+  ensureLayers();
+  if (vertices.length === 0) {
+    map.getSource("lote").setData(emptyFC());
+    map.getSource("vertices-src").setData(emptyFC());
+    return;
+  }
+  const closed = vertices.length >= 3 ? [...vertices, vertices[0]] : vertices;
+  let geom;
+  if (vertices.length >= 3) geom = { type: "Polygon", coordinates: [closed] };
+  else if (vertices.length === 2) geom = { type: "LineString", coordinates: vertices };
+  else geom = null;
+  map.getSource("lote").setData(geom ? { type: "Feature", geometry: geom, properties: {} } : emptyFC());
+  map.getSource("vertices-src").setData({
+    type: "FeatureCollection",
+    features: vertices.map((v, i) => ({
+      type: "Feature",
+      geometry: { type: "Point", coordinates: v },
+      properties: { idx: i }
+    }))
+  });
+}
+
+// ─────────────────────────────────────────────────────────────────
+// Métricas e cálculos
+// ─────────────────────────────────────────────────────────────────
+function decimalToDms(dec) {
+  const sign = dec < 0 ? "-" : "";
+  dec = Math.abs(dec);
+  const d = Math.floor(dec);
+  const mFloat = (dec - d) * 60;
+  const m = Math.floor(mFloat);
+  const s = ((mFloat - m) * 60).toFixed(0).padStart(2, "0");
+  return `${sign}${d}°${String(m).padStart(2, "0")}'${s}"`;
+}
+
+function azimuteEntreVerticesUTM(a, b) {
+  const aUTM = proj4("EPSG:4674", "EPSG:31983", a);
+  const bUTM = proj4("EPSG:4674", "EPSG:31983", b);
+  const dE = bUTM[0] - aUTM[0];
+  const dN = bUTM[1] - aUTM[1];
+  let az = Math.atan2(dE, dN) * 180 / Math.PI;
+  if (az < 0) az += 360;
+  return { az_dec: az, az_dms: decimalToDms(az), aUTM, bUTM };
+}
+
+function distanciaUTM(a, b) {
+  const aUTM = proj4("EPSG:4674", "EPSG:31983", a);
+  const bUTM = proj4("EPSG:4674", "EPSG:31983", b);
+  return Math.hypot(bUTM[0] - aUTM[0], bUTM[1] - aUTM[1]);
+}
+
+function updateMetrics() {
+  document.getElementById("m-vertices").textContent = vertices.length;
+  const tbody = document.querySelector("#t-sides tbody");
+  tbody.innerHTML = "";
+  if (vertices.length < 3) {
+    document.getElementById("m-area").textContent = "—";
+    document.getElementById("m-perim").textContent = "—";
+    document.getElementById("btn-memorial").disabled = true;
+    document.getElementById("btn-undo").disabled = vertices.length === 0;
+    return;
+  }
+  const ring = [...vertices, vertices[0]];
+  const polygon = turf.polygon([ring]);
+  const area = turf.area(polygon);
+  let perim = 0;
+  for (let i = 0; i < vertices.length; i++) {
+    const a = vertices[i], b = vertices[(i + 1) % vertices.length];
+    const d = distanciaUTM(a, b);
+    perim += d;
+    const { az_dms } = azimuteEntreVerticesUTM(a, b);
+    const tr = document.createElement("tr");
+    tr.innerHTML = `<td>M${i}→M${(i + 1) % vertices.length}</td><td>${d.toFixed(2)} m</td><td>${az_dms}</td>`;
+    tbody.appendChild(tr);
+  }
+  document.getElementById("m-area").textContent = `${area.toFixed(2)} m² (${(area / 10000).toFixed(4)} ha)`;
+  document.getElementById("m-perim").textContent = `${perim.toFixed(2)} m`;
+  document.getElementById("btn-memorial").disabled = drawing;
+  document.getElementById("btn-undo").disabled = false;
+}
+
+// ─────────────────────────────────────────────────────────────────
+// Controles
+// ─────────────────────────────────────────────────────────────────
+const $ = (id) => document.getElementById(id);
+
+$("btn-start-draw").onclick = () => {
+  drawing = true;
+  vertices = [];
+  redraw();
+  updateMetrics();
+  $("btn-finish-draw").disabled = false;
+  $("btn-memorial").disabled = true;
+  map.getCanvas().style.cursor = "crosshair";
+};
+
+$("btn-finish-draw").onclick = () => {
+  if (vertices.length < 3) { alert("Mínimo 3 vértices."); return; }
+  drawing = false;
+  map.getCanvas().style.cursor = "";
+  $("btn-finish-draw").disabled = true;
+  $("btn-memorial").disabled = false;
+};
+
+$("btn-undo").onclick = () => {
+  vertices.pop();
+  redraw();
+  updateMetrics();
+};
+
+$("btn-clear").onclick = () => {
+  vertices = [];
+  drawing = false;
+  map.getCanvas().style.cursor = "";
+  $("btn-finish-draw").disabled = true;
+  redraw();
+  updateMetrics();
+};
+
+// ─────────────────────────────────────────────────────────────────
+// Busca de endereço (Nominatim)
+// ─────────────────────────────────────────────────────────────────
+$("btn-search").onclick = doSearch;
+$("search-input").addEventListener("keydown", (e) => { if (e.key === "Enter") { e.preventDefault(); doSearch(); } });
+
+async function doSearch() {
+  const q = $("search-input").value.trim();
+  if (!q) return;
+  $("search-status").textContent = "Buscando...";
+  try {
+    const url = `https://nominatim.openstreetmap.org/search?format=json&limit=1&q=${encodeURIComponent(q)}`;
+    const res = await fetch(url, { headers: { "Accept-Language": "pt-BR" } });
+    const data = await res.json();
+    if (!data.length) { $("search-status").textContent = "Nada encontrado."; return; }
+    const r = data[0];
+    map.flyTo({ center: [parseFloat(r.lon), parseFloat(r.lat)], zoom: 18 });
+    $("search-status").textContent = r.display_name;
+  } catch (err) {
+    $("search-status").textContent = "Erro na busca: " + err.message;
+  }
+}
+
+// ─────────────────────────────────────────────────────────────────
+// Persistência (localStorage)
+// ─────────────────────────────────────────────────────────────────
+const STORAGE_KEY = "cartorio-mosaico-lotes";
+
+function readLotes() { return JSON.parse(localStorage.getItem(STORAGE_KEY) || "[]"); }
+function writeLotes(arr) { localStorage.setItem(STORAGE_KEY, JSON.stringify(arr)); }
+
+$("btn-save").onclick = () => {
+  if (vertices.length < 3) { alert("Desenhe um polígono primeiro."); return; }
+  const form = $("form-matricula");
+  const data = Object.fromEntries(new FormData(form).entries());
+  const ring = [...vertices, vertices[0]];
+  const area = turf.area(turf.polygon([ring]));
+  let perim = 0;
+  for (let i = 0; i < vertices.length; i++) perim += distanciaUTM(vertices[i], vertices[(i + 1) % vertices.length]);
+  const lote = {
+    id: Date.now().toString(),
+    matricula: data,
+    vertices,
+    area_m2: area,
+    perimetro_m: perim,
+    saved_at: new Date().toISOString()
+  };
+  const lotes = readLotes();
+  const idx = lotes.findIndex(l => l.matricula.numero && l.matricula.numero === data.numero);
+  if (idx >= 0 && confirm(`Já existe lote com matrícula nº ${data.numero}. Sobrescrever?`)) lotes[idx] = lote;
+  else lotes.push(lote);
+  writeLotes(lotes);
+  renderSavedList();
+  redrawSaved();
+};
+
+function renderSavedList() {
+  const ul = $("saved-list");
+  const lotes = readLotes();
+  ul.innerHTML = "";
+  if (!lotes.length) { ul.innerHTML = '<li style="color:#888;cursor:default">— vazio —</li>'; return; }
+  lotes.forEach(l => {
+    const li = document.createElement("li");
+    li.innerHTML = `
+      <span>
+        <strong>${l.matricula.numero || "(sem nº)"}</strong>
+        — ${l.matricula.proprietario || ""}
+        <div class="meta">${(l.area_m2 || 0).toFixed(1)} m² • ${l.vertices.length} vértices</div>
+      </span>
+      <button class="del" data-id="${l.id}" title="Excluir">×</button>
+    `;
+    li.onclick = (e) => {
+      if (e.target.classList.contains("del")) return;
+      loadLote(l);
+    };
+    li.querySelector(".del").onclick = (e) => {
+      e.stopPropagation();
+      const left = readLotes().filter(x => x.id !== l.id);
+      writeLotes(left);
+      renderSavedList();
+      redrawSaved();
+    };
+    ul.appendChild(li);
+  });
+}
+
+function loadLote(l) {
+  vertices = l.vertices;
+  drawing = false;
+  Object.keys(l.matricula).forEach(k => {
+    const f = document.querySelector(`[name="${k}"]`);
+    if (f) f.value = l.matricula[k] || "";
+  });
+  redraw();
+  updateMetrics();
+  $("btn-memorial").disabled = false;
+  if (vertices.length) {
+    const ring = [...vertices, vertices[0]];
+    const bbox = turf.bbox(turf.polygon([ring]));
+    map.fitBounds([[bbox[0], bbox[1]], [bbox[2], bbox[3]]], { padding: 60, maxZoom: 19 });
+  }
+}
+
+function redrawSaved() {
+  if (!map.getSource("saved-src")) return;
+  const lotes = readLotes();
+  map.getSource("saved-src").setData({
+    type: "FeatureCollection",
+    features: lotes.map(l => ({
+      type: "Feature",
+      geometry: { type: "Polygon", coordinates: [[...l.vertices, l.vertices[0]]] },
+      properties: { numero: l.matricula.numero || "" }
+    }))
+  });
+}
+
+$("btn-export-all").onclick = () => {
+  const lotes = readLotes();
+  const fc = {
+    type: "FeatureCollection",
+    features: lotes.map(l => ({
+      type: "Feature",
+      geometry: { type: "Polygon", coordinates: [[...l.vertices, l.vertices[0]]] },
+      properties: { ...l.matricula, area_m2: l.area_m2, perimetro_m: l.perimetro_m, saved_at: l.saved_at }
+    }))
+  };
+  const blob = new Blob([JSON.stringify(fc, null, 2)], { type: "application/geo+json" });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = `cartorio-mosaico-lotes-${new Date().toISOString().slice(0, 10)}.geojson`;
+  a.click();
+  URL.revokeObjectURL(url);
+};
+
+// ─────────────────────────────────────────────────────────────────
+// Geração do memorial descritivo
+// ─────────────────────────────────────────────────────────────────
+$("btn-memorial").onclick = () => {
+  if (vertices.length < 3) return;
+  const form = $("form-matricula");
+  const data = Object.fromEntries(new FormData(form).entries());
+  $("memorial-content").innerHTML = renderMemorial(data, vertices);
+  $("memorial-dialog").showModal();
+};
+
+$("btn-close-dialog").onclick = () => $("memorial-dialog").close();
+$("btn-print").onclick = () => window.print();
+
+function renderMemorial(matricula, vertices) {
+  const ring = [...vertices, vertices[0]];
+  const polygon = turf.polygon([ring]);
+  const area = turf.area(polygon);
+  const utmCoords = vertices.map(v => proj4("EPSG:4674", "EPSG:31983", v));
+  let perim = 0;
+  const segments = vertices.map((a, i) => {
+    const b = vertices[(i + 1) % vertices.length];
+    const d = distanciaUTM(a, b);
+    perim += d;
+    const { az_dms } = azimuteEntreVerticesUTM(a, b);
+    return { de: `M${i}`, para: `M${(i + 1) % vertices.length}`, dist: d, azimute: az_dms };
+  });
+
+  const today = new Date().toLocaleDateString("pt-BR");
+  const rows = vertices.map((v, i) => `
+    <tr>
+      <td>M${i}</td>
+      <td>${utmCoords[i][0].toFixed(3)}</td>
+      <td>${utmCoords[i][1].toFixed(3)}</td>
+      <td>${decimalToDms(v[1])}</td>
+      <td>${decimalToDms(v[0])}</td>
+    </tr>`).join("");
+
+  let descricao = "";
+  segments.forEach((s) => {
+    descricao += ` Daí segue com azimute de ${s.azimute} e distância de ${s.dist.toFixed(2)} m até o marco ${s.para}, confrontando com ________________.`;
+  });
+
+  return `
+  <div class="memorial">
+    <h1>MEMORIAL DESCRITIVO</h1>
+    <p class="cartorio-line">Cartório de Registro de Imóveis da Comarca de ${escapeHtml(matricula.comarca || "—")}</p>
+
+    <h2>Identificação</h2>
+    <p>
+      <strong>Matrícula nº:</strong> ${escapeHtml(matricula.numero || "—")}<br>
+      <strong>Proprietário(a):</strong> ${escapeHtml(matricula.proprietario || "—")}<br>
+      <strong>Endereço:</strong> ${escapeHtml(matricula.endereco || "—")}<br>
+      <strong>Descrição textual da matrícula:</strong> ${escapeHtml(matricula.descricao_textual || "—")}
+    </p>
+
+    <h2>Coordenadas dos vértices</h2>
+    <table>
+      <thead><tr><th>Marco</th><th>UTM E (m)</th><th>UTM N (m)</th><th>Latitude</th><th>Longitude</th></tr></thead>
+      <tbody>${rows}</tbody>
+    </table>
+    <p class="small">Datum SIRGAS 2000 (EPSG:4674) — UTM zona 23S (EPSG:31983).</p>
+
+    <h2>Descrição do perímetro</h2>
+    <p class="descricao">
+      Tem início no marco M0, de coordenadas (E=${utmCoords[0][0].toFixed(3)} m, N=${utmCoords[0][1].toFixed(3)} m).${descricao} Fechando o polígono no marco M0.
+    </p>
+
+    <h2>Área e perímetro</h2>
+    <p>
+      <strong>Área:</strong> ${area.toFixed(4)} m² (${(area / 10000).toFixed(4)} ha)<br>
+      <strong>Perímetro:</strong> ${perim.toFixed(2)} m
+    </p>
+
+    <p class="disclaimer">
+      Documento de trabalho — não substitui levantamento topográfico com ART nem certificação SIGEF. Coordenadas obtidas a partir de imagem orbital com erro posicional estimado de 1 a 5 metros. Os campos de confrontante devem ser preenchidos pelo operador conforme descrição da matrícula.
+    </p>
+    <p class="footer-line">
+      Gerado em ${today} — Cartório Mosaico V0 (protótipo).
+    </p>
+  </div>`;
+}
+
+function escapeHtml(s) {
+  return String(s).replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+}
+
+// ─────────────────────────────────────────────────────────────────
+// Init
+// ─────────────────────────────────────────────────────────────────
+renderSavedList();
+</script>
+
+</body>
+</html>
