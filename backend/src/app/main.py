@@ -1,6 +1,7 @@
 from fastapi import FastAPI
 
-from app.api import matriculas
+from app.api import lotes, matriculas, memoriais, mosaico
+from app.middleware.audit import AuditMiddleware
 
 app = FastAPI(
     title="Cartório Mosaico API",
@@ -11,7 +12,12 @@ app = FastAPI(
     ),
 )
 
+app.add_middleware(AuditMiddleware)
+
 app.include_router(matriculas.router)
+app.include_router(lotes.router)
+app.include_router(mosaico.router)
+app.include_router(memoriais.router)
 
 
 @app.get("/health")
