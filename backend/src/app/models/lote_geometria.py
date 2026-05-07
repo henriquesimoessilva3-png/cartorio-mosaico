@@ -12,6 +12,7 @@ class LoteGeometria(Base):
     __tablename__ = "lote_geometria"
 
     id: Mapped[int] = mapped_column(primary_key=True)
+    tenant_id: Mapped[int] = mapped_column(ForeignKey("tenant.id"), index=True)
     matricula_id: Mapped[int] = mapped_column(
         ForeignKey("matricula.id"), index=True
     )

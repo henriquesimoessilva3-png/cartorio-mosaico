@@ -1,6 +1,14 @@
 from fastapi import FastAPI
 
-from app.api import auth, lotes, matriculas, memoriais, mosaico
+from app.api import (
+    admin_imports,
+    auditorias,
+    auth,
+    lotes,
+    matriculas,
+    memoriais,
+    mosaico,
+)
 from app.middleware.audit import AuditMiddleware
 
 app = FastAPI(
@@ -19,6 +27,8 @@ app.include_router(matriculas.router)
 app.include_router(lotes.router)
 app.include_router(mosaico.router)
 app.include_router(memoriais.router)
+app.include_router(auditorias.router)
+app.include_router(admin_imports.router)
 
 
 @app.get("/health")

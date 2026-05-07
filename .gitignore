@@ -17,6 +17,11 @@ dist/
 .next/
 build/
 
+# TS build cache + outputs gerados de vite.config.ts
+*.tsbuildinfo
+frontend/vite.config.js
+frontend/vite.config.d.ts
+
 # IDE
 .vscode/
 .idea/

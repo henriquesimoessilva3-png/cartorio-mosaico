@@ -5,7 +5,7 @@ from fastapi import APIRouter, Depends
 from sqlalchemy import text
 from sqlalchemy.orm import Session
 
-from app.api.deps import get_current_user
+from app.api.deps import get_current_tenant_id, get_current_user
 from app.db.database import get_db
 from app.models.usuario import Usuario
 from app.services.topology import detectar_overlaps
@@ -13,21 +13,24 @@ from app.services.topology import detectar_overlaps
 router = APIRouter(prefix="/api/mosaico", tags=["mosaico"])
 DbSession = Annotated[Session, Depends(get_db)]
 AuthUser = Annotated[Usuario, Depends(get_current_user)]
+TenantId = Annotated[int, Depends(get_current_tenant_id)]
 
 
 @router.get("")
-def mosaico(db: DbSession, _user: AuthUser) -> dict:
+def mosaico(db: DbSession, _user: AuthUser, tenant_id: TenantId) -> dict:
     """FeatureCollection GeoJSON com a versão mais recente de cada matrícula."""
     sql = """
     SELECT DISTINCT ON (lg.matricula_id)
-        lg.id, lg.matricula_id, lg.versao, lg.area_calculada_m2,
+        lg.id, lg.matricula_id, lg.versao,
+        lg.area_calculada_m2, lg.perimetro_m, lg.criado_em,
         ST_AsGeoJSON(lg.geometry) AS geom_json,
         m.numero, m.status_geometria, m.proprietario_atual_nome
     FROM lote_geometria lg
     JOIN matricula m ON m.id = lg.matricula_id
+    WHERE lg.tenant_id = :tenant_id
     ORDER BY lg.matricula_id, lg.versao DESC
     """
-    rows = db.execute(text(sql)).all()
+    rows = db.execute(text(sql), {"tenant_id": tenant_id}).all()
     features = [
         {
             "type": "Feature",
@@ -39,6 +42,8 @@ def mosaico(db: DbSession, _user: AuthUser) -> dict:
                 "proprietario": r.proprietario_atual_nome,
                 "versao": r.versao,
                 "area_m2": float(r.area_calculada_m2 or 0),
+                "perimetro_m": float(r.perimetro_m or 0),
+                "criado_em": r.criado_em.isoformat() if r.criado_em else None,
                 "status": r.status_geometria,
             },
         }
@@ -48,5 +53,5 @@ def mosaico(db: DbSession, _user: AuthUser) -> dict:
 
 
 @router.get("/conflitos")
-def conflitos(db: DbSession, _user: AuthUser) -> dict:
-    return {"overlaps": detectar_overlaps(db)}
+def conflitos(db: DbSession, _user: AuthUser, tenant_id: TenantId) -> dict:
+    return {"overlaps": detectar_overlaps(db, tenant_id=tenant_id)}

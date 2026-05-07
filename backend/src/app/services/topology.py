@@ -4,17 +4,18 @@ from sqlalchemy.orm import Session
 
 
 def detectar_overlaps(
-    db: Session, area_minima_m2: float = 0.5
+    db: Session, area_minima_m2: float = 0.5, *, tenant_id: int | None = None
 ) -> list[dict]:
     """Pares (lote_a, lote_b) com sobreposição maior que `area_minima_m2`.
 
     Considera apenas a versão mais recente por matrícula e calcula a área
-    da intersecção em UTM 23S (EPSG:31983).
+    da intersecção em UTM 23S (EPSG:31983). Filtra por tenant_id quando informado.
     """
     sql = """
     WITH ultima_versao AS (
-      SELECT DISTINCT ON (matricula_id) id, matricula_id, geometry
+      SELECT DISTINCT ON (matricula_id) id, matricula_id, geometry, tenant_id
       FROM lote_geometria
+      WHERE (:tenant_id IS NULL OR tenant_id = :tenant_id)
       ORDER BY matricula_id, versao DESC
     )
     SELECT
@@ -30,12 +31,16 @@ def detectar_overlaps(
     """
     return [
         dict(row._mapping)
-        for row in db.execute(text(sql), {"area_min": area_minima_m2})
+        for row in db.execute(
+            text(sql), {"area_min": area_minima_m2, "tenant_id": tenant_id}
+        )
     ]
 
 
-def vizinhos_que_tocam(db: Session, lote_id: int) -> list[dict]:
-    """Lotes que tocam (ST_Touches) o lote dado, com matrícula vizinha."""
+def vizinhos_que_tocam(
+    db: Session, lote_id: int, *, tenant_id: int | None = None
+) -> list[dict]:
+    """Lotes que tocam (ST_Touches) o lote dado, restrito ao tenant do base se informado."""
     sql = """
     SELECT
         v.id AS lote_vizinho_id,
@@ -45,10 +50,13 @@ def vizinhos_que_tocam(db: Session, lote_id: int) -> list[dict]:
     FROM lote_geometria base
     JOIN lote_geometria v
       ON v.id <> base.id AND ST_Touches(base.geometry, v.geometry)
+      AND (:tenant_id IS NULL OR v.tenant_id = :tenant_id)
     JOIN matricula m ON m.id = v.matricula_id
     WHERE base.id = :base_id
     """
     return [
         dict(row._mapping)
-        for row in db.execute(text(sql), {"base_id": lote_id})
+        for row in db.execute(
+            text(sql), {"base_id": lote_id, "tenant_id": tenant_id}
+        )
     ]

@@ -6,7 +6,7 @@
 <meta charset="UTF-8">
 <title>Memorial Descritivo — Matrícula {{ matricula.numero }}</title>
 <style>
-  @page { size: A4; margin: 2cm; }
+  @page { size: A4; margin: {{ page_margin_cm | default(2) }}cm; }
   body { font-family: 'Times New Roman', serif; font-size: 11pt; line-height: 1.4; }
   h1 { font-size: 14pt; text-align: center; }
   h2 { font-size: 12pt; margin-top: 1em; }

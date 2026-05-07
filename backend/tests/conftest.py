@@ -1,12 +1,14 @@
-"""Fixtures de integração — Postgres+PostGIS via testcontainers.
+"""Fixtures de integração — Postgres+PostGIS.
 
-Os testes marcados com `@pytest.mark.integration` exigem Docker rodando.
-Rode com:
-    uv run pytest -m integration
+Por padrão, sobe Postgres+PostGIS via testcontainers (requer Docker).
+Para rodar contra um Postgres local sem Docker, exporte:
+    TEST_DATABASE_URL=postgresql+psycopg://user@localhost:5432/cartorio_test
 
 Os smoke tests (test_smoke.py) não dependem destas fixtures e rodam sempre.
 """
 from __future__ import annotations
+
+import os
 
 import pytest
 
@@ -14,12 +16,26 @@ import pytest
 def pytest_configure(config: pytest.Config) -> None:
     config.addinivalue_line(
         "markers",
-        "integration: requer Docker para subir Postgres+PostGIS via testcontainers",
+        "integration: requer Postgres+PostGIS (Docker via testcontainers ou TEST_DATABASE_URL local)",
     )
+
+
+class _LocalPostgresWrapper:
+    """Mimica a parte usada de PostgresContainer pra rodar com Postgres local."""
+
+    def __init__(self, url: str) -> None:
+        self._url = url
+
+    def get_connection_url(self) -> str:
+        return self._url
 
 
 @pytest.fixture(scope="session")
 def postgres_container():
+    local_url = os.environ.get("TEST_DATABASE_URL")
+    if local_url:
+        yield _LocalPostgresWrapper(local_url)
+        return
     pytest.importorskip("testcontainers.postgres", reason="testcontainers não instalado")
     from testcontainers.postgres import PostgresContainer
 
@@ -61,7 +77,7 @@ def reset_db(engine):
     with engine.begin() as conn:
         conn.execute(
             text(
-                "TRUNCATE audit_log, confrontante, lote_geometria, matricula, usuario "
+                "TRUNCATE audit_log, confrontante, lote_geometria, matricula, usuario, tenant "
                 "RESTART IDENTITY CASCADE"
             )
         )
@@ -98,13 +114,19 @@ def auth_client(engine, reset_db):
 
     from app.db.database import get_db
     from app.main import app
+    from app.models.tenant import Tenant
     from app.models.usuario import Usuario
     from app.services.auth import hash_password
 
     Session = sessionmaker(bind=engine)
 
     with Session() as db:
+        tenant = Tenant(slug="default", nome="Cartório Default")
+        db.add(tenant)
+        db.commit()
+        db.refresh(tenant)
         admin = Usuario(
+            tenant_id=tenant.id,
             nome="Admin Test",
             email="admin@test.com",
             password_hash=hash_password("admin-test-1234"),

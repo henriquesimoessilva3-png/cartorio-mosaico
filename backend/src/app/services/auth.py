@@ -21,9 +21,13 @@ def verify_password(plain: str, hashed: str) -> bool:
     return _pwd.verify(plain, hashed)
 
 
-def create_access_token(sub: int | str, role: str) -> str:
+def create_access_token(
+    sub: int | str, role: str, tenant_id: int | None = None
+) -> str:
     expire = datetime.now(timezone.utc) + timedelta(hours=ACCESS_TOKEN_EXPIRE_HOURS)
-    payload = {"sub": str(sub), "role": role, "exp": expire}
+    payload: dict = {"sub": str(sub), "role": role, "exp": expire}
+    if tenant_id is not None:
+        payload["tenant_id"] = tenant_id
     return jwt.encode(payload, settings.secret_key, algorithm=ALGORITHM)
 
 

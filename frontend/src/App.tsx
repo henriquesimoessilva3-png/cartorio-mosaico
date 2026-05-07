@@ -12,16 +12,23 @@ import {
   desativarUsuario,
   getToken,
   healthCheck,
+  listarAuditorias,
   listarMatriculas,
   listarUsuarios,
   login as apiLogin,
   logout as apiLogout,
   lotesPorMatricula,
   me as apiMe,
+  obterAuditoria,
+  previewCroquiBlob,
   validacaoTextual,
+  type AuditoriaDetail,
+  type AuditoriaFilters,
+  type AuditoriaListItem,
   type Conflito,
   type Lote,
   type Matricula,
+  type PdfOptions,
   type User,
   type UserCreate,
   type ValidacaoTextual,
@@ -34,6 +41,39 @@ import {
 } from "./lib/geo";
 
 const FERROS_CENTER: LonLat = [-43.022, -19.234];
+const DRAFT_KEY = (userId: number) => `cartorio-draft:${userId}`;
+
+// Auto-login dev: pula a tela de login. Backend continua exigindo JWT
+// (audit log precisa do user_id), mas o usuário não vê a tela.
+const DEV_AUTOLOGIN = {
+  email: "henrique@local.test",
+  password: "minhasenha-12345",
+};
+
+function computeBoundsFromFeatures(
+  features: GeoJSON.Feature[],
+): [[number, number], [number, number]] | null {
+  let minLng = Infinity, minLat = Infinity, maxLng = -Infinity, maxLat = -Infinity;
+  function visit(coords: unknown): void {
+    if (typeof coords === "number") return;
+    if (Array.isArray(coords) && typeof coords[0] === "number") {
+      const [lng, lat] = coords as [number, number];
+      if (lng < minLng) minLng = lng;
+      if (lat < minLat) minLat = lat;
+      if (lng > maxLng) maxLng = lng;
+      if (lat > maxLat) maxLat = lat;
+      return;
+    }
+    if (Array.isArray(coords)) coords.forEach(visit);
+  }
+  for (const f of features) {
+    if (f.geometry && "coordinates" in f.geometry) {
+      visit(f.geometry.coordinates);
+    }
+  }
+  if (!isFinite(minLng)) return null;
+  return [[minLng, minLat], [maxLng, maxLat]];
+}
 
 const BASEMAPS = {
   esri: {
@@ -70,88 +110,53 @@ const EMPTY_FORM: FormState = {
 export default function App() {
   const [user, setUser] = useState<User | null>(null);
   const [authChecking, setAuthChecking] = useState(true);
+  const [bootErr, setBootErr] = useState<string | null>(null);
 
   useEffect(() => {
-    if (!getToken()) {
-      setAuthChecking(false);
-      return;
-    }
-    apiMe()
-      .then((u) => {
+    async function bootstrap() {
+      if (getToken()) {
+        try {
+          const u = await apiMe();
+          setUser(u);
+          return;
+        } catch {
+          apiLogout();
+        }
+      }
+      try {
+        const { user: u } = await apiLogin(
+          DEV_AUTOLOGIN.email,
+          DEV_AUTOLOGIN.password,
+        );
         setUser(u);
-        setAuthChecking(false);
-      })
-      .catch(() => {
-        setAuthChecking(false);
-      });
+      } catch (e) {
+        setBootErr(String(e));
+      }
+    }
+    void bootstrap().finally(() => setAuthChecking(false));
   }, []);
 
   if (authChecking) {
-    return <div className="full-center">Verificando sessão…</div>;
+    return <div className="full-center">Conectando…</div>;
   }
   if (!user) {
-    return <LoginScreen onLogin={setUser} />;
+    return (
+      <div className="full-center">
+        <div className="login-card">
+          <h1>Cartório Mosaico</h1>
+          <p className="err">Não foi possível conectar.</p>
+          <p className="muted small">{bootErr ?? "—"}</p>
+          <p className="muted small">
+            Verifique se o backend está rodando e se o usuário admin existe.
+          </p>
+        </div>
+      </div>
+    );
   }
-  return <Editor user={user} onLogout={() => { apiLogout(); setUser(null); }} />;
+  return <Editor user={user} />;
 }
 
-function LoginScreen({ onLogin }: { onLogin: (u: User) => void }) {
-  const [email, setEmail] = useState("");
-  const [password, setPassword] = useState("");
-  const [busy, setBusy] = useState(false);
-  const [err, setErr] = useState<string | null>(null);
-
-  async function handle(e: React.FormEvent) {
-    e.preventDefault();
-    setBusy(true);
-    setErr(null);
-    try {
-      const { user } = await apiLogin(email, password);
-      onLogin(user);
-    } catch (ex) {
-      setErr(String(ex));
-    } finally {
-      setBusy(false);
-    }
-  }
-
-  return (
-    <div className="full-center">
-      <form onSubmit={handle} className="login-card">
-        <h1>Cartório Mosaico</h1>
-        <p className="muted">Entre para acessar o sistema.</p>
-        <label>
-          Email
-          <input
-            type="email"
-            value={email}
-            onChange={(e) => setEmail(e.target.value)}
-            required
-            autoFocus
-          />
-        </label>
-        <label>
-          Senha
-          <input
-            type="password"
-            value={password}
-            onChange={(e) => setPassword(e.target.value)}
-            required
-          />
-        </label>
-        {err && <div className="err">{err}</div>}
-        <button type="submit" disabled={busy} className="primary">
-          {busy ? "Entrando…" : "Entrar"}
-        </button>
-        <p className="muted small">
-          Sem usuário? Rode <code>scripts/create_admin.py</code> no servidor.
-        </p>
-      </form>
-    </div>
-  );
-}
-
-function Editor({ user, onLogout }: { user: User; onLogout: () => void }) {
+function Editor({ user }: { user: User }) {
   const mapDiv = useRef<HTMLDivElement>(null);
   const mapRef = useRef<MlMap | null>(null);
   const dragRef = useRef<{ idx: number } | null>(null);
@@ -168,6 +173,9 @@ function Editor({ user, onLogout }: { user: User; onLogout: () => void }) {
   const [conflitos, setConflitos] = useState<Conflito[]>([]);
   const [conflitosLoading, setConflitosLoading] = useState(false);
   const [adminOpen, setAdminOpen] = useState(false);
+  const [auditoriaOpen, setAuditoriaOpen] = useState(false);
+  const [memoriaisOpen, setMemoriaisOpen] = useState(false);
+  const [pdfDialogLoteId, setPdfDialogLoteId] = useState<number | null>(null);
   const [validacao, setValidacao] = useState<ValidacaoTextual | null>(null);
 
   const stateRef = useRef({ vertices, drawing });
@@ -176,7 +184,37 @@ function Editor({ user, onLogout }: { user: User; onLogout: () => void }) {
   useEffect(() => {
     healthCheck().then(() => setApiOk(true)).catch(() => setApiOk(false));
     refreshMatriculas();
+    // Restaura desenho em andamento da última sessão (se houver).
+    try {
+      const raw = localStorage.getItem(DRAFT_KEY(user.id));
+      if (raw) {
+        const parsed = JSON.parse(raw) as { vertices?: LonLat[]; form?: FormState };
+        if (parsed.vertices && parsed.vertices.length > 0) {
+          setVertices(parsed.vertices);
+          if (parsed.form) setForm(parsed.form);
+        }
+      }
+    } catch {
+      // localStorage corrompido — ignora.
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  // Persiste desenho em andamento no localStorage (auto-save).
+  useEffect(() => {
+    if (vertices.length === 0 && !form.numero.trim()) {
+      localStorage.removeItem(DRAFT_KEY(user.id));
+      return;
+    }
+    try {
+      localStorage.setItem(
+        DRAFT_KEY(user.id),
+        JSON.stringify({ vertices, form }),
+      );
+    } catch {
+      // quota cheia — ignora.
+    }
+  }, [vertices, form, user.id]);
 
   function refreshMatriculas() {
     listarMatriculas()
@@ -304,11 +342,15 @@ function Editor({ user, onLogout }: { user: User; onLogout: () => void }) {
 
     map.on("click", (e: MapMouseEvent) => {
       if (!stateRef.current.drawing) return;
+      // Se o clique foi em cima de um vértice existente, não adiciona — o
+      // drag handler vai assumir.
+      const hits = map.queryRenderedFeatures(e.point, { layers: ["vertices-pt"] });
+      if (hits.length > 0) return;
       setVertices((prev) => [...prev, [e.lngLat.lng, e.lngLat.lat]]);
     });
 
     map.on("mouseenter", "vertices-pt", () => {
-      if (stateRef.current.drawing || dragRef.current) return;
+      if (dragRef.current) return;
       map.getCanvas().style.cursor = "grab";
     });
     map.on("mouseleave", "vertices-pt", () => {
@@ -316,12 +358,13 @@ function Editor({ user, onLogout }: { user: User; onLogout: () => void }) {
       map.getCanvas().style.cursor = stateRef.current.drawing ? "crosshair" : "";
     });
     map.on("mousedown", "vertices-pt", (e) => {
-      if (stateRef.current.drawing) return;
+      // Permite drag tanto durante quanto após o desenho.
       e.preventDefault();
       const props = e.features?.[0].properties as { idx?: number } | undefined;
       if (typeof props?.idx === "number") {
         dragRef.current = { idx: props.idx };
         map.getCanvas().style.cursor = "grabbing";
+        map.dragPan.disable();
       }
     });
     map.on("mousemove", (e) => {
@@ -335,6 +378,30 @@ function Editor({ user, onLogout }: { user: User; onLogout: () => void }) {
       if (!dragRef.current) return;
       dragRef.current = null;
       map.getCanvas().style.cursor = "";
+      map.dragPan.enable();
+    });
+    // Suporte a touch (mobile) — espelha o mesmo padrão do mouse.
+    map.on("touchstart", "vertices-pt", (e) => {
+      if (e.points.length !== 1) return;
+      e.preventDefault();
+      const props = e.features?.[0].properties as { idx?: number } | undefined;
+      if (typeof props?.idx === "number") {
+        dragRef.current = { idx: props.idx };
+        map.dragPan.disable();
+      }
+    });
+    map.on("touchmove", (e) => {
+      if (!dragRef.current || e.points.length !== 1) return;
+      e.preventDefault();
+      const idx = dragRef.current.idx;
+      setVertices((prev) =>
+        prev.map((v, i) => (i === idx ? [e.lngLat.lng, e.lngLat.lat] : v)),
+      );
+    });
+    map.on("touchend", () => {
+      if (!dragRef.current) return;
+      dragRef.current = null;
+      map.dragPan.enable();
     });
 
     mapRef.current = map;
@@ -383,15 +450,35 @@ function Editor({ user, onLogout }: { user: User; onLogout: () => void }) {
     map.getCanvas().style.cursor = drawing ? "crosshair" : "";
   }, [drawing]);
 
-  function loadMosaico() {
+  function loadMosaico(autoFit: boolean = true) {
     const map = mapRef.current;
     if (!map) return;
     buscarMosaico()
       .then((fc) => {
         const src = map.getSource("mosaico") as maplibregl.GeoJSONSource;
         if (src) src.setData(fc);
+        if (autoFit && fc.features.length > 0) {
+          const bounds = computeBoundsFromFeatures(fc.features);
+          if (bounds) {
+            map.fitBounds(bounds, { padding: 60, maxZoom: 19, duration: 600 });
+          }
+        }
       })
       .catch(() => {});
+  }
+
+  function flyToMatricula(matriculaId: number) {
+    const map = mapRef.current;
+    if (!map) return;
+    const src = map.getSource("mosaico") as maplibregl.GeoJSONSource | undefined;
+    if (!src) return;
+    const fc = (src as unknown as { _data?: GeoJSON.FeatureCollection })._data;
+    const feat = fc?.features.find(
+      (f) => (f.properties as { matricula_id?: number })?.matricula_id === matriculaId,
+    );
+    if (!feat) return;
+    const b = computeBoundsFromFeatures([feat]);
+    if (b) map.fitBounds(b, { padding: 80, maxZoom: 21, duration: 700 });
   }
 
   async function handleSearchAddress() {
@@ -435,7 +522,9 @@ function Editor({ user, onLogout }: { user: User; onLogout: () => void }) {
       });
       setLastLoteId(lote.id);
       refreshMatriculas();
-      loadMosaico();
+      loadMosaico(false); // não reposiciona — usuário acabou de desenhar aqui
+      // Limpa o rascunho persistido após salvar com sucesso.
+      localStorage.removeItem(DRAFT_KEY(user.id));
       alert(
         `Salvo. Matrícula ${matricula.numero} — Lote #${lote.id} v${lote.versao} (área ${(
           lote.area_calculada_m2 ?? 0
@@ -461,15 +550,9 @@ function Editor({ user, onLogout }: { user: User; onLogout: () => void }) {
     }
   }
 
-  async function handleBaixarPdf(loteId: number) {
-    try {
-      const blob = await baixarMemorialPdf(loteId);
-      const url = URL.createObjectURL(blob);
-      window.open(url, "_blank");
-      setTimeout(() => URL.revokeObjectURL(url), 60_000);
-    } catch (e) {
-      alert(`Erro: ${e}`);
-    }
+  function handleBaixarPdf(loteId: number) {
+    // Abre dialog de configuração; o download em si acontece dentro do dialog.
+    setPdfDialogLoteId(loteId);
   }
 
   async function handleValidar(loteId: number) {
@@ -513,13 +596,23 @@ function Editor({ user, onLogout }: { user: User; onLogout: () => void }) {
           </span>
           <span className="user-chip">
             {user.nome} <small>({user.role})</small>
+            {user.tenant?.nome && (
+              <small style={{ marginLeft: 6, opacity: 0.7 }}>· {user.tenant.nome}</small>
+            )}
           </span>
+          <button onClick={() => setMemoriaisOpen(true)} className="link-btn">
+            Memoriais
+          </button>
           {user.role === "admin" && (
-            <button onClick={() => setAdminOpen(true)} className="link-btn">
-              Usuários
-            </button>
+            <>
+              <button onClick={() => setAdminOpen(true)} className="link-btn">
+                Usuários
+              </button>
+              <button onClick={() => setAuditoriaOpen(true)} className="link-btn">
+                Auditoria
+              </button>
+            </>
           )}
-          <button onClick={onLogout} className="link-btn">Sair</button>
         </div>
       </header>
       <div className="layout">
@@ -683,7 +776,7 @@ function Editor({ user, onLogout }: { user: User; onLogout: () => void }) {
 
           <h2>Mosaico da circunscrição</h2>
           <div>
-            <button onClick={loadMosaico}>Recarregar mosaico</button>
+            <button onClick={() => loadMosaico(true)}>Recarregar mosaico</button>
             <button onClick={handleConflitos}>Detectar conflitos</button>
           </div>
           <p className="muted small">
@@ -696,7 +789,14 @@ function Editor({ user, onLogout }: { user: User; onLogout: () => void }) {
           ) : (
             <ul className="matriculas-list">
               {matriculas.slice(0, 50).map((m) => (
-                <li key={m.id} onClick={() => setForm({ ...form, numero: m.numero })}>
+                <li
+                  key={m.id}
+                  onClick={() => {
+                    setForm((f) => ({ ...f, numero: m.numero }));
+                    flyToMatricula(m.id);
+                  }}
+                  title="Clique para selecionar e voar até o lote no mapa"
+                >
                   <strong>{m.numero}</strong>
                   {m.proprietario_atual_nome ? ` — ${m.proprietario_atual_nome}` : ""}
                   <span className={`badge badge-${m.status_geometria}`}>
@@ -744,6 +844,595 @@ function Editor({ user, onLogout }: { user: User; onLogout: () => void }) {
       {adminOpen && (
         <AdminDialog onClose={() => setAdminOpen(false)} currentUserId={user.id} />
       )}
+
+      {auditoriaOpen && (
+        <AuditoriaDialog onClose={() => setAuditoriaOpen(false)} />
+      )}
+
+      {pdfDialogLoteId !== null && (
+        <PdfConfigDialog
+          loteId={pdfDialogLoteId}
+          userId={user.id}
+          onClose={() => setPdfDialogLoteId(null)}
+        />
+      )}
+
+      {memoriaisOpen && (
+        <MemoriaisDialog
+          onClose={() => setMemoriaisOpen(false)}
+          onFlyTo={(mid) => {
+            flyToMatricula(mid);
+            setMemoriaisOpen(false);
+          }}
+          onBaixarPdf={(loteId) => {
+            setMemoriaisOpen(false);
+            handleBaixarPdf(loteId);
+          }}
+        />
+      )}
+    </div>
+  );
+}
+
+type MemorialItem = {
+  lote_id: number;
+  matricula_id: number;
+  matricula_numero: string;
+  proprietario: string | null;
+  versao: number;
+  area_m2: number;
+  perimetro_m: number;
+  criado_em: string | null;
+  status: string;
+};
+
+function MemoriaisDialog({
+  onClose,
+  onFlyTo,
+  onBaixarPdf,
+}: {
+  onClose: () => void;
+  onFlyTo: (matriculaId: number) => void;
+  onBaixarPdf: (loteId: number) => void;
+}) {
+  const [items, setItems] = useState<MemorialItem[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [statusFilter, setStatusFilter] = useState("");
+  const [busca, setBusca] = useState("");
+
+  useEffect(() => {
+    setLoading(true);
+    buscarMosaico()
+      .then((fc) => {
+        const list = fc.features
+          .map((f) => f.properties as unknown as MemorialItem)
+          .sort((a, b) => (b.criado_em ?? "").localeCompare(a.criado_em ?? ""));
+        setItems(list);
+      })
+      .catch((e) => alert(`Erro: ${e}`))
+      .finally(() => setLoading(false));
+  }, []);
+
+  const q = busca.trim().toLowerCase();
+  const filtered = items.filter((i) => {
+    if (statusFilter && i.status !== statusFilter) return false;
+    if (q) {
+      const hay = `${i.matricula_numero} ${i.proprietario ?? ""}`.toLowerCase();
+      if (!hay.includes(q)) return false;
+    }
+    return true;
+  });
+
+  return (
+    <div className="dialog-backdrop" onClick={onClose}>
+      <div className="dialog dialog-wide" onClick={(e) => e.stopPropagation()}>
+        <h2>Memoriais ({items.length})</h2>
+        <p className="muted small" style={{ marginTop: -4 }}>
+          Versão mais recente de cada matrícula. Cada linha = um lote
+          geometrizado com PDF disponível.
+        </p>
+        <div style={{ display: "flex", gap: 8, marginBottom: 12, flexWrap: "wrap" }}>
+          <input
+            placeholder="buscar matrícula ou proprietário…"
+            value={busca}
+            onChange={(e) => setBusca(e.target.value)}
+            style={{ flex: 1, minWidth: 200 }}
+          />
+          <select
+            value={statusFilter}
+            onChange={(e) => setStatusFilter(e.target.value)}
+          >
+            <option value="">— todos os status —</option>
+            <option value="rascunho">rascunho</option>
+            <option value="revisado">revisado</option>
+            <option value="validado_art">validado ART</option>
+          </select>
+        </div>
+        {loading ? (
+          <p>Carregando…</p>
+        ) : (
+          <>
+            <table>
+              <thead>
+                <tr>
+                  <th>Data</th>
+                  <th>Matrícula</th>
+                  <th>Proprietário</th>
+                  <th>v</th>
+                  <th>Área (m²)</th>
+                  <th>Perím. (m)</th>
+                  <th>Status</th>
+                  <th>Ações</th>
+                </tr>
+              </thead>
+              <tbody>
+                {filtered.map((it) => (
+                  <tr key={it.lote_id}>
+                    <td>
+                      {it.criado_em
+                        ? new Date(it.criado_em).toLocaleString("pt-BR")
+                        : "—"}
+                    </td>
+                    <td>
+                      <strong>{it.matricula_numero}</strong>
+                    </td>
+                    <td>{it.proprietario || <em>—</em>}</td>
+                    <td>v{it.versao}</td>
+                    <td>{it.area_m2.toFixed(2)}</td>
+                    <td>{it.perimetro_m.toFixed(2)}</td>
+                    <td>
+                      <span className={`badge badge-${it.status}`}>
+                        {it.status}
+                      </span>
+                    </td>
+                    <td>
+                      <button onClick={() => onFlyTo(it.matricula_id)}>
+                        Voar
+                      </button>
+                      <button onClick={() => onBaixarPdf(it.lote_id)}>
+                        PDF
+                      </button>
+                    </td>
+                  </tr>
+                ))}
+                {filtered.length === 0 && (
+                  <tr>
+                    <td colSpan={8}>
+                      <em>Nenhum memorial encontrado.</em>
+                    </td>
+                  </tr>
+                )}
+              </tbody>
+            </table>
+            <p className="muted small" style={{ marginTop: 8 }}>
+              Mostrando {filtered.length} de {items.length}.
+            </p>
+          </>
+        )}
+        <div style={{ textAlign: "right", marginTop: 12 }}>
+          <button onClick={onClose}>Fechar</button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+const DEFAULT_PDF_OPTS: PdfOptions = {
+  croqui_width: 620,
+  croqui_height: 400,
+  croqui_pad: 36,
+  marker_size: 5,
+  font_size: 11,
+  page_margin_cm: 2,
+  usar_satelite: false,
+};
+
+function _presetKey(userId: number): string {
+  return `pdf-preset:${userId}`;
+}
+
+function _loadPreset(userId: number): PdfOptions {
+  try {
+    const raw = localStorage.getItem(_presetKey(userId));
+    if (!raw) return { ...DEFAULT_PDF_OPTS };
+    return { ...DEFAULT_PDF_OPTS, ...JSON.parse(raw) };
+  } catch {
+    return { ...DEFAULT_PDF_OPTS };
+  }
+}
+
+function PdfConfigDialog({
+  loteId,
+  userId,
+  onClose,
+}: {
+  loteId: number;
+  userId: number;
+  onClose: () => void;
+}) {
+  const [opts, setOpts] = useState<PdfOptions>(() => _loadPreset(userId));
+  const [previewUrl, setPreviewUrl] = useState<string | null>(null);
+  const [previewLoading, setPreviewLoading] = useState(false);
+  const [downloading, setDownloading] = useState(false);
+  const debounceRef = useRef<number | null>(null);
+
+  // Persistir preset on change
+  useEffect(() => {
+    try {
+      localStorage.setItem(_presetKey(userId), JSON.stringify(opts));
+    } catch {
+      // localStorage cheio ou bloqueado — silencioso.
+    }
+  }, [opts, userId]);
+
+  // Debounced preview refresh — só pra modo SVG (rápido). Satélite carrega
+  // só sob clique explícito pra não estourar o orçamento de tiles.
+  useEffect(() => {
+    if (debounceRef.current !== null) {
+      window.clearTimeout(debounceRef.current);
+    }
+    if (opts.usar_satelite) return; // não auto-refresh em satélite
+    debounceRef.current = window.setTimeout(() => {
+      void loadPreview();
+    }, 400);
+    return () => {
+      if (debounceRef.current !== null) window.clearTimeout(debounceRef.current);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [
+    opts.croqui_width,
+    opts.croqui_height,
+    opts.croqui_pad,
+    opts.marker_size,
+    opts.font_size,
+    opts.usar_satelite,
+  ]);
+
+  async function loadPreview() {
+    setPreviewLoading(true);
+    try {
+      const blob = await previewCroquiBlob(loteId, opts);
+      const url = URL.createObjectURL(blob);
+      setPreviewUrl((old) => {
+        if (old) URL.revokeObjectURL(old);
+        return url;
+      });
+    } catch (e) {
+      console.warn("Preview falhou:", e);
+    } finally {
+      setPreviewLoading(false);
+    }
+  }
+
+  // Cleanup blob ao fechar
+  useEffect(() => {
+    return () => {
+      if (previewUrl) URL.revokeObjectURL(previewUrl);
+    };
+  }, [previewUrl]);
+
+  async function handleDownload() {
+    setDownloading(true);
+    try {
+      const blob = await baixarMemorialPdf(loteId, opts);
+      const url = URL.createObjectURL(blob);
+      window.open(url, "_blank");
+      setTimeout(() => URL.revokeObjectURL(url), 60_000);
+      onClose();
+    } catch (e) {
+      alert(`Erro: ${e}`);
+    } finally {
+      setDownloading(false);
+    }
+  }
+
+  function set<K extends keyof PdfOptions>(key: K, val: PdfOptions[K]) {
+    setOpts((o) => ({ ...o, [key]: val }));
+  }
+
+  function resetPreset() {
+    setOpts({ ...DEFAULT_PDF_OPTS });
+  }
+
+  return (
+    <div className="dialog-backdrop" onClick={onClose}>
+      <div className="dialog dialog-wide" onClick={(e) => e.stopPropagation()}>
+        <h2>Configurar PDF do memorial</h2>
+        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16 }}>
+          <div>
+            <label>
+              Largura do croqui ({opts.croqui_width}px)
+              <input
+                type="range"
+                min={320}
+                max={1200}
+                step={10}
+                value={opts.croqui_width ?? 620}
+                onChange={(e) => set("croqui_width", Number(e.target.value))}
+              />
+            </label>
+            <label>
+              Altura do croqui ({opts.croqui_height}px)
+              <input
+                type="range"
+                min={240}
+                max={900}
+                step={10}
+                value={opts.croqui_height ?? 400}
+                onChange={(e) => set("croqui_height", Number(e.target.value))}
+              />
+            </label>
+            <label>
+              Padding interno ({opts.croqui_pad}px)
+              <input
+                type="range"
+                min={0}
+                max={120}
+                step={2}
+                value={opts.croqui_pad ?? 36}
+                onChange={(e) => set("croqui_pad", Number(e.target.value))}
+              />
+            </label>
+            <label>
+              Tamanho do marco ({opts.marker_size}px)
+              <input
+                type="range"
+                min={2}
+                max={20}
+                step={1}
+                value={opts.marker_size ?? 5}
+                onChange={(e) => set("marker_size", Number(e.target.value))}
+              />
+            </label>
+            <label>
+              Tamanho da fonte ({opts.font_size}pt)
+              <input
+                type="range"
+                min={6}
+                max={24}
+                step={1}
+                value={opts.font_size ?? 11}
+                onChange={(e) => set("font_size", Number(e.target.value))}
+              />
+            </label>
+            <label>
+              Margem da página ({opts.page_margin_cm}cm)
+              <input
+                type="range"
+                min={0.5}
+                max={5}
+                step={0.1}
+                value={opts.page_margin_cm ?? 2}
+                onChange={(e) => set("page_margin_cm", Number(e.target.value))}
+              />
+            </label>
+            <label style={{ display: "block", marginTop: 8 }}>
+              <input
+                type="checkbox"
+                checked={!!opts.usar_satelite}
+                onChange={(e) => set("usar_satelite", e.target.checked)}
+              />{" "}
+              Usar fundo de satélite (Esri)
+            </label>
+            {opts.usar_satelite && (
+              <button onClick={() => void loadPreview()} disabled={previewLoading} style={{ marginTop: 4 }}>
+                {previewLoading ? "Carregando…" : "Atualizar preview com satélite"}
+              </button>
+            )}
+            <div style={{ marginTop: 12 }}>
+              <button onClick={resetPreset}>Restaurar padrão</button>
+            </div>
+          </div>
+          <div>
+            <p style={{ margin: 0 }}>
+              <strong>Preview do croqui</strong>
+              {previewLoading && <small> · atualizando…</small>}
+            </p>
+            {previewUrl ? (
+              <img
+                src={previewUrl}
+                alt="Preview do croqui"
+                style={{
+                  width: "100%",
+                  border: "1px solid #ccc",
+                  marginTop: 6,
+                  background: "#f5f5f5",
+                }}
+              />
+            ) : (
+              <p>
+                <em>O preview aparecerá aqui.</em>
+              </p>
+            )}
+          </div>
+        </div>
+
+        <div style={{ display: "flex", justifyContent: "flex-end", gap: 8, marginTop: 16 }}>
+          <button onClick={onClose}>Cancelar</button>
+          <button className="primary" onClick={handleDownload} disabled={downloading}>
+            {downloading ? "Gerando PDF…" : "Baixar PDF"}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function AuditoriaDialog({ onClose }: { onClose: () => void }) {
+  const [items, setItems] = useState<AuditoriaListItem[]>([]);
+  const [total, setTotal] = useState(0);
+  const [loading, setLoading] = useState(true);
+  const [filters, setFilters] = useState<AuditoriaFilters>({ limit: 50, offset: 0 });
+  const [detail, setDetail] = useState<AuditoriaDetail | null>(null);
+
+  function refresh(next: AuditoriaFilters = filters) {
+    setLoading(true);
+    listarAuditorias(next)
+      .then((r) => {
+        setItems(r.items);
+        setTotal(r.total);
+      })
+      .catch((e) => alert(`Erro: ${e}`))
+      .finally(() => setLoading(false));
+  }
+
+  useEffect(() => {
+    refresh(filters);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [filters.limit, filters.offset]);
+
+  function applyFilters(e: React.FormEvent) {
+    e.preventDefault();
+    refresh({ ...filters, offset: 0 });
+    setFilters((f) => ({ ...f, offset: 0 }));
+  }
+
+  function nextPage() {
+    setFilters((f) => ({ ...f, offset: (f.offset ?? 0) + (f.limit ?? 50) }));
+  }
+  function prevPage() {
+    setFilters((f) => ({
+      ...f,
+      offset: Math.max(0, (f.offset ?? 0) - (f.limit ?? 50)),
+    }));
+  }
+
+  async function showDetail(id: number) {
+    try {
+      const d = await obterAuditoria(id);
+      setDetail(d);
+    } catch (e) {
+      alert(`Erro: ${e}`);
+    }
+  }
+
+  const limit = filters.limit ?? 50;
+  const offset = filters.offset ?? 0;
+
+  return (
+    <div className="dialog-backdrop" onClick={onClose}>
+      <div className="dialog dialog-wide" onClick={(e) => e.stopPropagation()}>
+        <h2>Auditoria</h2>
+
+        <form onSubmit={applyFilters} style={{ display: "flex", gap: 8, flexWrap: "wrap", marginBottom: 12 }}>
+          <select
+            value={filters.acao ?? ""}
+            onChange={(e) => setFilters({ ...filters, acao: e.target.value || undefined })}
+          >
+            <option value="">— ação —</option>
+            <option value="POST">POST</option>
+            <option value="PUT">PUT</option>
+            <option value="PATCH">PATCH</option>
+            <option value="DELETE">DELETE</option>
+          </select>
+          <input
+            placeholder="entidade contém…"
+            value={filters.entidade ?? ""}
+            onChange={(e) => setFilters({ ...filters, entidade: e.target.value || undefined })}
+          />
+          <input
+            type="number"
+            placeholder="user_id"
+            value={filters.user_id ?? ""}
+            onChange={(e) =>
+              setFilters({
+                ...filters,
+                user_id: e.target.value ? Number(e.target.value) : undefined,
+              })
+            }
+            style={{ width: 90 }}
+          />
+          <label>
+            de
+            <input
+              type="datetime-local"
+              value={filters.from ?? ""}
+              onChange={(e) => setFilters({ ...filters, from: e.target.value || undefined })}
+            />
+          </label>
+          <label>
+            até
+            <input
+              type="datetime-local"
+              value={filters.to ?? ""}
+              onChange={(e) => setFilters({ ...filters, to: e.target.value || undefined })}
+            />
+          </label>
+          <button type="submit" className="primary">Filtrar</button>
+        </form>
+
+        {loading ? (
+          <p>Carregando…</p>
+        ) : (
+          <>
+            <table>
+              <thead>
+                <tr>
+                  <th>Quando</th>
+                  <th>Usuário</th>
+                  <th>Ação</th>
+                  <th>Entidade</th>
+                  <th>ID</th>
+                </tr>
+              </thead>
+              <tbody>
+                {items.map((it) => (
+                  <tr key={it.id} onClick={() => showDetail(it.id)} style={{ cursor: "pointer" }}>
+                    <td>{new Date(it.criado_em).toLocaleString()}</td>
+                    <td>{it.user_nome ?? <em>—</em>}</td>
+                    <td>{it.acao}</td>
+                    <td>{it.entidade}</td>
+                    <td>{it.entidade_id ?? "—"}</td>
+                  </tr>
+                ))}
+                {items.length === 0 && (
+                  <tr>
+                    <td colSpan={5}>
+                      <em>Sem registros.</em>
+                    </td>
+                  </tr>
+                )}
+              </tbody>
+            </table>
+
+            <div style={{ display: "flex", justifyContent: "space-between", marginTop: 12 }}>
+              <span>
+                {offset + 1}–{Math.min(offset + limit, total)} de {total}
+              </span>
+              <div>
+                <button onClick={prevPage} disabled={offset === 0}>‹ Anterior</button>
+                <button onClick={nextPage} disabled={offset + limit >= total}>Próxima ›</button>
+              </div>
+            </div>
+          </>
+        )}
+
+        <div style={{ textAlign: "right", marginTop: 16 }}>
+          <button onClick={onClose}>Fechar</button>
+        </div>
+
+        {detail && (
+          <div className="dialog-backdrop" onClick={() => setDetail(null)} style={{ zIndex: 100 }}>
+            <div className="dialog" onClick={(e) => e.stopPropagation()}>
+              <h3>Detalhe — #{detail.id}</h3>
+              <p>
+                <strong>{detail.acao}</strong> {detail.entidade}{" "}
+                {detail.entidade_id ? `(id=${detail.entidade_id})` : ""}
+              </p>
+              <p>
+                {new Date(detail.criado_em).toLocaleString()} ·{" "}
+                {detail.user_nome ?? <em>sem usuário</em>}
+              </p>
+              <pre style={{ background: "#f5f5f5", padding: 8, fontSize: 12, overflow: "auto", maxHeight: 320 }}>
+                {JSON.stringify(detail.payload_jsonb, null, 2)}
+              </pre>
+              <div style={{ textAlign: "right" }}>
+                <button onClick={() => setDetail(null)}>Fechar</button>
+              </div>
+            </div>
+          </div>
+        )}
+      </div>
     </div>
   );
 }

@@ -7,8 +7,15 @@ from sqlalchemy.orm import Session
 
 from app.api.deps import get_current_user, require_role
 from app.db.database import get_db
+from app.models.tenant import Tenant
 from app.models.usuario import Usuario
-from app.schemas.auth import Token, UsuarioCreate, UsuarioRead, UsuarioUpdate
+from app.schemas.auth import (
+    MeResponse,
+    Token,
+    UsuarioCreate,
+    UsuarioRead,
+    UsuarioUpdate,
+)
 from app.services.auth import (
     create_access_token,
     hash_password,
@@ -34,13 +41,23 @@ def login(
         or not user.ativo
     ):
         raise HTTPException(401, "Credenciais inválidas")
-    token = create_access_token(user.id, user.role)
+    token = create_access_token(user.id, user.role, user.tenant_id)
     return {"access_token": token, "token_type": "bearer"}
 
 
-@router.get("/me", response_model=UsuarioRead)
-def me(user: Annotated[Usuario, Depends(get_current_user)]):
-    return user
+@router.get("/me", response_model=MeResponse)
+def me(user: Annotated[Usuario, Depends(get_current_user)], db: DbSession):
+    tenant = db.get(Tenant, user.tenant_id) if user.tenant_id is not None else None
+    return MeResponse(
+        id=user.id,
+        nome=user.nome,
+        email=user.email,
+        role=user.role,
+        ativo=user.ativo,
+        criado_em=user.criado_em,
+        tenant_id=user.tenant_id,
+        tenant=tenant,
+    )
 
 
 @router.post(
@@ -48,12 +65,18 @@ def me(user: Annotated[Usuario, Depends(get_current_user)]):
     response_model=UsuarioRead,
     status_code=status.HTTP_201_CREATED,
 )
-def register(payload: UsuarioCreate, db: DbSession, _: AdminOnly):
+def register(payload: UsuarioCreate, db: DbSession, current: AdminOnly):
     if db.execute(
         select(Usuario).where(Usuario.email == payload.email)
     ).scalar_one_or_none():
         raise HTTPException(409, "Email já cadastrado")
+    # tenant_id: usa o do payload se admin global; senão herda do criador.
+    if current.tenant_id is None:
+        tenant_id = payload.tenant_id
+    else:
+        tenant_id = current.tenant_id
     user = Usuario(
+        tenant_id=tenant_id,
         nome=payload.nome,
         email=payload.email,
         password_hash=hash_password(payload.password),
@@ -66,8 +89,11 @@ def register(payload: UsuarioCreate, db: DbSession, _: AdminOnly):
 
 
 @router.get("/users", response_model=list[UsuarioRead])
-def listar_usuarios(db: DbSession, _: AdminOnly):
-    return db.execute(select(Usuario).order_by(Usuario.id)).scalars().all()
+def listar_usuarios(db: DbSession, current: AdminOnly):
+    stmt = select(Usuario).order_by(Usuario.id)
+    if current.tenant_id is not None:
+        stmt = stmt.where(Usuario.tenant_id == current.tenant_id)
+    return db.execute(stmt).scalars().all()
 
 
 @router.put("/users/{user_id}", response_model=UsuarioRead)
@@ -75,10 +101,12 @@ def atualizar_usuario(
     user_id: int,
     payload: UsuarioUpdate,
     db: DbSession,
-    _: AdminOnly,
+    current: AdminOnly,
 ):
     user = db.get(Usuario, user_id)
     if user is None:
+        raise HTTPException(404, "Usuário não encontrado")
+    if current.tenant_id is not None and user.tenant_id != current.tenant_id:
         raise HTTPException(404, "Usuário não encontrado")
     data = payload.model_dump(exclude_unset=True)
     if "password" in data and data["password"]:
@@ -100,6 +128,8 @@ def desativar_usuario(
 ):
     user = db.get(Usuario, user_id)
     if user is None:
+        raise HTTPException(404, "Usuário não encontrado")
+    if current_user.tenant_id is not None and user.tenant_id != current_user.tenant_id:
         raise HTTPException(404, "Usuário não encontrado")
     if user.id == current_user.id:
         raise HTTPException(400, "Não é possível desativar a própria conta")

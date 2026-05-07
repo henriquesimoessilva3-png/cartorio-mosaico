@@ -10,10 +10,29 @@ from starlette.middleware.base import BaseHTTPMiddleware
 
 from app.db.database import SessionLocal
 from app.models.audit_log import AuditLog
+from app.services.auth import decode_access_token
 
 logger = logging.getLogger("audit")
 
 MUTATING_METHODS = {"POST", "PUT", "PATCH", "DELETE"}
+
+
+def _claims_from_request(request: Request) -> tuple[int | None, int | None]:
+    """Retorna (user_id, tenant_id) extraídos do JWT do header. Best-effort."""
+    auth = request.headers.get("authorization") or request.headers.get("Authorization")
+    if not auth or not auth.lower().startswith("bearer "):
+        return None, None
+    try:
+        payload = decode_access_token(auth.split(" ", 1)[1])
+        if not payload:
+            return None, None
+        sub = payload.get("sub")
+        user_id = int(sub) if sub is not None else None
+        tid = payload.get("tenant_id")
+        tenant_id = int(tid) if tid is not None else None
+        return user_id, tenant_id
+    except (ValueError, TypeError):
+        return None, None
 
 
 class AuditMiddleware(BaseHTTPMiddleware):
@@ -28,10 +47,12 @@ class AuditMiddleware(BaseHTTPMiddleware):
             return response
 
         try:
+            user_id, tenant_id = _claims_from_request(request)
             with SessionLocal() as db:
                 db.add(
                     AuditLog(
-                        user_id=None,
+                        tenant_id=tenant_id,
+                        user_id=user_id,
                         acao=request.method,
                         entidade=request.url.path,
                         entidade_id=None,

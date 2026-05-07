@@ -8,6 +8,7 @@ class Confrontante(Base):
     __tablename__ = "confrontante"
 
     id: Mapped[int] = mapped_column(primary_key=True)
+    tenant_id: Mapped[int] = mapped_column(ForeignKey("tenant.id"), index=True)
     lote_geometria_id: Mapped[int] = mapped_column(
         ForeignKey("lote_geometria.id"), index=True
     )
