@@ -1,0 +1,90 @@
+{# Template do Memorial Descritivo — V0 padrão genérico.
+   Substituir pelo modelo real do cartório quando disponível. #}
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="UTF-8">
+<title>Memorial Descritivo — Matrícula {{ matricula.numero }}</title>
+<style>
+  @page { size: A4; margin: 2cm; }
+  body { font-family: 'Times New Roman', serif; font-size: 11pt; line-height: 1.4; }
+  h1 { font-size: 14pt; text-align: center; }
+  h2 { font-size: 12pt; margin-top: 1em; }
+  table { width: 100%; border-collapse: collapse; margin: 0.5em 0; }
+  th, td { border: 1px solid #333; padding: 4px 6px; text-align: right; font-size: 10pt; }
+  th { background: #eee; }
+  .descricao { text-align: justify; }
+  .disclaimer { font-size: 9pt; color: #555; border-top: 1px solid #999;
+                margin-top: 1.5em; padding-top: 0.5em; }
+</style>
+</head>
+<body>
+
+<h1>MEMORIAL DESCRITIVO</h1>
+<p style="text-align:center">{{ cartorio.nome }} &mdash; Comarca de {{ cartorio.comarca }}</p>
+
+<h2>Identificação</h2>
+<p>
+  <strong>Matrícula:</strong> {{ matricula.numero }}<br>
+  <strong>Proprietário(a):</strong> {{ matricula.proprietario_atual_nome or '—' }}<br>
+  <strong>Endereço:</strong>
+  {{ matricula.endereco_logradouro }}{% if matricula.endereco_numero %}, {{ matricula.endereco_numero }}{% endif %}
+  {% if matricula.endereco_complemento %}, {{ matricula.endereco_complemento }}{% endif %}
+  {% if matricula.endereco_bairro %}— {{ matricula.endereco_bairro }}{% endif %}
+</p>
+
+<h2>Coordenadas dos vértices</h2>
+<table>
+  <thead>
+    <tr><th>Marco</th><th>UTM E (m)</th><th>UTM N (m)</th>
+        <th>Latitude</th><th>Longitude</th></tr>
+  </thead>
+  <tbody>
+    {% for v in vertices %}
+    <tr>
+      <td>{{ v.marco }}</td>
+      <td>{{ '%.3f'|format(v.e_utm) }}</td>
+      <td>{{ '%.3f'|format(v.n_utm) }}</td>
+      <td>{{ v.lat_dms }}</td>
+      <td>{{ v.lon_dms }}</td>
+    </tr>
+    {% endfor %}
+  </tbody>
+</table>
+<p style="font-size:9pt">Datum SIRGAS 2000 (EPSG:4674) — UTM zona {{ utm_zone }}.</p>
+
+<h2>Descrição do perímetro</h2>
+<p class="descricao">
+  Tem início no marco {{ vertices[0].marco }}, de coordenadas (E={{ '%.3f'|format(vertices[0].e_utm) }} m,
+  N={{ '%.3f'|format(vertices[0].n_utm) }} m).
+  {% for seg in segmentos %}
+  Daí segue com azimute de {{ seg.azimute_dms }} e distância de {{ '%.2f'|format(seg.distancia_m) }} m
+  até o marco {{ seg.para }}, confrontando com {{ seg.confrontante }}.
+  {% endfor %}
+  Fechando o polígono no marco {{ vertices[0].marco }}.
+</p>
+
+<h2>Área e perímetro</h2>
+<p>
+  <strong>Área:</strong> {{ '%.4f'|format(area_m2) }} m² ({{ '%.4f'|format(area_m2 / 10000) }} ha)<br>
+  <strong>Perímetro:</strong> {{ '%.2f'|format(perimetro_m) }} m
+</p>
+
+{% if croqui_base64 %}
+<h2>Croqui</h2>
+<img src="data:image/png;base64,{{ croqui_base64 }}" style="max-width:100%; border:1px solid #999">
+{% endif %}
+
+<p class="disclaimer">
+{{ texto_disclaimer or
+  "Documento de trabalho — não substitui levantamento topográfico com ART nem
+   certificação SIGEF. Coordenadas obtidas a partir de imagem orbital com erro
+   posicional estimado de 1 a 5 metros."
+}}
+<br><br>
+Gerado em {{ gerado_em.strftime('%d/%m/%Y %H:%M') }} por {{ operador.nome }}.<br>
+Hash do documento: <code>{{ hash_documento }}</code>
+</p>
+
+</body>
+</html>

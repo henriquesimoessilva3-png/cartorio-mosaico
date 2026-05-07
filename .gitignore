@@ -1,0 +1,48 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+
+# Node
+node_modules/
+dist/
+.vite/
+.next/
+build/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Env
+.env
+.env.local
+.env.*.local
+
+# Logs
+*.log
+
+# DB local
+*.sqlite
+*.sqlite3
+*.db
+
+# PDFs gerados (saída do app)
+generated_pdfs/
+
+# Lockfiles do uv (manter — não comente)
+# uv.lock                       <- commit
+# package-lock.json             <- commit
