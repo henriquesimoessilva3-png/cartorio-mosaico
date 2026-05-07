@@ -2,22 +2,29 @@ import { useEffect, useRef, useState } from "react";
 import maplibregl, { type Map as MlMap, type MapMouseEvent } from "maplibre-gl";
 
 import {
+  atualizarUsuario,
   baixarMemorialPdf,
   buscarConflitos,
   buscarMosaico,
   criarLote,
   criarMatricula,
+  criarUsuario,
+  desativarUsuario,
   getToken,
   healthCheck,
   listarMatriculas,
+  listarUsuarios,
   login as apiLogin,
   logout as apiLogout,
   lotesPorMatricula,
   me as apiMe,
+  validacaoTextual,
   type Conflito,
   type Lote,
   type Matricula,
   type User,
+  type UserCreate,
+  type ValidacaoTextual,
 } from "./api/client";
 import {
   computeArea,
@@ -160,6 +167,8 @@ function Editor({ user, onLogout }: { user: User; onLogout: () => void }) {
   const [conflitosOpen, setConflitosOpen] = useState(false);
   const [conflitos, setConflitos] = useState<Conflito[]>([]);
   const [conflitosLoading, setConflitosLoading] = useState(false);
+  const [adminOpen, setAdminOpen] = useState(false);
+  const [validacao, setValidacao] = useState<ValidacaoTextual | null>(null);
 
   const stateRef = useRef({ vertices, drawing });
   stateRef.current = { vertices, drawing };
@@ -463,6 +472,15 @@ function Editor({ user, onLogout }: { user: User; onLogout: () => void }) {
     }
   }
 
+  async function handleValidar(loteId: number) {
+    try {
+      const v = await validacaoTextual(loteId);
+      setValidacao(v);
+    } catch (e) {
+      alert(`Erro: ${e}`);
+    }
+  }
+
   function loadVersionToEditor(lote: Lote) {
     if (!lote.vertices_jsonb) return;
     const vs: LonLat[] = lote.vertices_jsonb.map((v) => [v.lon, v.lat]);
@@ -496,6 +514,11 @@ function Editor({ user, onLogout }: { user: User; onLogout: () => void }) {
           <span className="user-chip">
             {user.nome} <small>({user.role})</small>
           </span>
+          {user.role === "admin" && (
+            <button onClick={() => setAdminOpen(true)} className="link-btn">
+              Usuários
+            </button>
+          )}
           <button onClick={onLogout} className="link-btn">Sair</button>
         </div>
       </header>
@@ -611,11 +634,51 @@ function Editor({ user, onLogout }: { user: User; onLogout: () => void }) {
             {saving ? "Salvando..." : "Salvar matrícula + lote"}
           </button>
           {lastLoteId !== null && (
-            <p style={{ marginTop: 8 }}>
+            <div style={{ marginTop: 8 }}>
               <button onClick={() => handleBaixarPdf(lastLoteId)}>
                 Baixar memorial PDF do lote #{lastLoteId}
               </button>
-            </p>
+              <button onClick={() => handleValidar(lastLoteId)}>
+                Validar contra texto
+              </button>
+            </div>
+          )}
+          {validacao && (
+            <div className="validacao">
+              <h3>Validação textual</h3>
+              {validacao.avisos.length > 0 ? (
+                <ul className="avisos">
+                  {validacao.avisos.map((a, i) => (
+                    <li key={i}>⚠ {a}</li>
+                  ))}
+                </ul>
+              ) : validacao.numeros_extraidos.length > 0 ? (
+                <p className="ok">Todas as medidas batem (tolerância 15%).</p>
+              ) : (
+                <p className="muted small">
+                  Nenhuma medida explícita encontrada no texto.
+                </p>
+              )}
+              {validacao.confrontantes_textuais.length > 0 && (
+                <>
+                  <h4>Confrontantes detectados no texto</h4>
+                  <ul className="confrontantes-textuais">
+                    {validacao.confrontantes_textuais.map((c) => (
+                      <li key={c.lado}>
+                        <strong>{c.lado}:</strong> {c.descricao}
+                      </li>
+                    ))}
+                  </ul>
+                </>
+              )}
+              <button
+                onClick={() => setValidacao(null)}
+                className="link-btn"
+                style={{ marginTop: 6, fontSize: 11 }}
+              >
+                fechar
+              </button>
+            </div>
           )}
 
           <h2>Mosaico da circunscrição</h2>
@@ -677,6 +740,228 @@ function Editor({ user, onLogout }: { user: User; onLogout: () => void }) {
           </div>
         </div>
       )}
+
+      {adminOpen && (
+        <AdminDialog onClose={() => setAdminOpen(false)} currentUserId={user.id} />
+      )}
+    </div>
+  );
+}
+
+function AdminDialog({
+  onClose,
+  currentUserId,
+}: {
+  onClose: () => void;
+  currentUserId: number;
+}) {
+  const [users, setUsers] = useState<User[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [showNew, setShowNew] = useState(false);
+  const [newForm, setNewForm] = useState<UserCreate>({
+    nome: "",
+    email: "",
+    password: "",
+    role: "leitura",
+  });
+  const [busy, setBusy] = useState(false);
+
+  function refresh() {
+    setLoading(true);
+    listarUsuarios()
+      .then((u) => setUsers(u))
+      .catch((e) => alert(`Erro: ${e}`))
+      .finally(() => setLoading(false));
+  }
+
+  useEffect(refresh, []);
+
+  async function handleCreate(e: React.FormEvent) {
+    e.preventDefault();
+    if (newForm.password.length < 8) {
+      alert("Senha precisa ter no mínimo 8 caracteres");
+      return;
+    }
+    setBusy(true);
+    try {
+      await criarUsuario(newForm);
+      setNewForm({ nome: "", email: "", password: "", role: "leitura" });
+      setShowNew(false);
+      refresh();
+    } catch (e) {
+      alert(`Erro: ${e}`);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function handleRoleChange(u: User, novoRole: string) {
+    try {
+      await atualizarUsuario(u.id, { role: novoRole as UserCreate["role"] });
+      refresh();
+    } catch (e) {
+      alert(`Erro: ${e}`);
+    }
+  }
+
+  async function handleToggleAtivo(u: User) {
+    if (u.id === currentUserId && u.ativo) {
+      alert("Não pode desativar a própria conta");
+      return;
+    }
+    try {
+      await atualizarUsuario(u.id, { ativo: !u.ativo });
+      refresh();
+    } catch (e) {
+      alert(`Erro: ${e}`);
+    }
+  }
+
+  async function handleResetSenha(u: User) {
+    const senha = prompt(`Nova senha para ${u.email} (mín. 8 chars):`);
+    if (!senha || senha.length < 8) return;
+    try {
+      await atualizarUsuario(u.id, { password: senha });
+      alert("Senha atualizada");
+    } catch (e) {
+      alert(`Erro: ${e}`);
+    }
+  }
+
+  async function handleDesativar(u: User) {
+    if (u.id === currentUserId) {
+      alert("Não pode desativar a própria conta");
+      return;
+    }
+    if (!confirm(`Desativar ${u.email}?`)) return;
+    try {
+      await desativarUsuario(u.id);
+      refresh();
+    } catch (e) {
+      alert(`Erro: ${e}`);
+    }
+  }
+
+  return (
+    <div className="dialog-backdrop" onClick={onClose}>
+      <div className="dialog dialog-wide" onClick={(e) => e.stopPropagation()}>
+        <h2>Usuários</h2>
+        {loading ? (
+          <p>Carregando…</p>
+        ) : (
+          <table>
+            <thead>
+              <tr>
+                <th>Nome</th>
+                <th>Email</th>
+                <th>Role</th>
+                <th>Status</th>
+                <th>Ações</th>
+              </tr>
+            </thead>
+            <tbody>
+              {users.map((u) => (
+                <tr key={u.id} className={u.ativo ? "" : "row-inactive"}>
+                  <td>
+                    {u.nome}
+                    {u.id === currentUserId && <small> (você)</small>}
+                  </td>
+                  <td>{u.email}</td>
+                  <td>
+                    <select
+                      value={u.role}
+                      onChange={(e) => handleRoleChange(u, e.target.value)}
+                      disabled={u.id === currentUserId}
+                    >
+                      <option value="leitura">leitura</option>
+                      <option value="escrevente">escrevente</option>
+                      <option value="escrivao">escrivão</option>
+                      <option value="admin">admin</option>
+                    </select>
+                  </td>
+                  <td>{u.ativo ? "ativo" : "inativo"}</td>
+                  <td>
+                    <button onClick={() => handleToggleAtivo(u)}>
+                      {u.ativo ? "Desativar" : "Reativar"}
+                    </button>
+                    <button onClick={() => handleResetSenha(u)}>Senha</button>
+                    {!u.ativo && (
+                      <button onClick={() => handleDesativar(u)} className="danger">
+                        Excluir
+                      </button>
+                    )}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        )}
+
+        <div style={{ marginTop: 16 }}>
+          {!showNew ? (
+            <button onClick={() => setShowNew(true)} className="primary">
+              + Novo usuário
+            </button>
+          ) : (
+            <form onSubmit={handleCreate} className="new-user-form">
+              <h3>Novo usuário</h3>
+              <label>
+                Nome
+                <input
+                  value={newForm.nome}
+                  onChange={(e) => setNewForm({ ...newForm, nome: e.target.value })}
+                  required
+                />
+              </label>
+              <label>
+                Email
+                <input
+                  type="email"
+                  value={newForm.email}
+                  onChange={(e) => setNewForm({ ...newForm, email: e.target.value })}
+                  required
+                />
+              </label>
+              <label>
+                Senha (mín. 8)
+                <input
+                  type="password"
+                  value={newForm.password}
+                  onChange={(e) => setNewForm({ ...newForm, password: e.target.value })}
+                  required
+                  minLength={8}
+                />
+              </label>
+              <label>
+                Role
+                <select
+                  value={newForm.role}
+                  onChange={(e) =>
+                    setNewForm({ ...newForm, role: e.target.value as UserCreate["role"] })
+                  }
+                >
+                  <option value="leitura">leitura</option>
+                  <option value="escrevente">escrevente</option>
+                  <option value="escrivao">escrivão</option>
+                  <option value="admin">admin</option>
+                </select>
+              </label>
+              <div style={{ marginTop: 8 }}>
+                <button type="submit" disabled={busy} className="primary">
+                  {busy ? "Criando…" : "Criar"}
+                </button>
+                <button type="button" onClick={() => setShowNew(false)}>
+                  Cancelar
+                </button>
+              </div>
+            </form>
+          )}
+        </div>
+
+        <div style={{ textAlign: "right", marginTop: 16 }}>
+          <button onClick={onClose}>Fechar</button>
+        </div>
+      </div>
     </div>
   );
 }

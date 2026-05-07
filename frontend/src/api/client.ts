@@ -140,6 +140,54 @@ export async function lotesPorMatricula(matriculaId: number): Promise<Lote[]> {
   return request(`/api/lotes/por-matricula/${matriculaId}`);
 }
 
+export interface ValidacaoTextual {
+  numeros_extraidos: number[];
+  matches: Array<{ valor_texto_m: number; lado_real_m: number; diff_pct: number }>;
+  avisos: string[];
+  confrontantes_textuais: Array<{ lado: string; descricao: string }>;
+}
+
+export async function validacaoTextual(loteId: number): Promise<ValidacaoTextual> {
+  return request(`/api/lotes/${loteId}/validacao-textual`);
+}
+
+// Admin de usuários
+export async function listarUsuarios(): Promise<User[]> {
+  return request("/api/auth/users");
+}
+
+export interface UserCreate {
+  nome: string;
+  email: string;
+  password: string;
+  role: "admin" | "escrivao" | "escrevente" | "leitura";
+}
+
+export async function criarUsuario(payload: UserCreate): Promise<User> {
+  return request("/api/auth/register", {
+    method: "POST",
+    body: JSON.stringify(payload),
+  });
+}
+
+export interface UserUpdate {
+  nome?: string;
+  role?: "admin" | "escrivao" | "escrevente" | "leitura";
+  ativo?: boolean;
+  password?: string;
+}
+
+export async function atualizarUsuario(id: number, payload: UserUpdate): Promise<User> {
+  return request(`/api/auth/users/${id}`, {
+    method: "PUT",
+    body: JSON.stringify(payload),
+  });
+}
+
+export async function desativarUsuario(id: number): Promise<void> {
+  return request(`/api/auth/users/${id}`, { method: "DELETE" });
+}
+
 export interface Conflito {
   lote_a: number;
   matricula_a: number;
