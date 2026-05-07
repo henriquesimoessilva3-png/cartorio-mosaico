@@ -1,5 +1,7 @@
 from fastapi import FastAPI
 
+from app.api import matriculas
+
 app = FastAPI(
     title="Cartório Mosaico API",
     version="0.1.0",
@@ -8,6 +10,8 @@ app = FastAPI(
         "Saída é documento auxiliar interno — não substitui ART de agrimensor."
     ),
 )
+
+app.include_router(matriculas.router)
 
 
 @app.get("/health")
