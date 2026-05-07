@@ -27,3 +27,10 @@ class UsuarioRead(BaseModel):
     role: str
     ativo: bool
     criado_em: datetime
+
+
+class UsuarioUpdate(BaseModel):
+    nome: str | None = Field(None, max_length=255)
+    role: Role | None = None
+    ativo: bool | None = None
+    password: str | None = Field(None, min_length=8)

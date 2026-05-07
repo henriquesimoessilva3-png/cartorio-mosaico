@@ -1,6 +1,7 @@
 """Geração de PDF do memorial descritivo — Jinja2 + WeasyPrint."""
 from __future__ import annotations
 
+import base64
 import hashlib
 from datetime import datetime
 from pathlib import Path
@@ -14,6 +15,7 @@ from app.models.confrontante import Confrontante
 from app.models.lote_geometria import LoteGeometria
 from app.models.matricula import Matricula
 from app.services.croqui import render_croqui_svg
+from app.services.croqui_satellite import render_croqui_satellite_png
 
 TEMPLATE_DIR = Path(__file__).resolve().parents[4] / "templates"
 
@@ -65,7 +67,15 @@ def gerar_memorial_pdf(
     vertices = lote.vertices_jsonb or []
 
     coords_utm = [(v["e_utm"], v["n_utm"]) for v in vertices if "e_utm" in v]
+    coords_lonlat = [(v["lon"], v["lat"]) for v in vertices if "lon" in v]
     croqui_svg = render_croqui_svg(coords_utm) if coords_utm else ""
+
+    # Tenta croqui satélite (pode falhar — rede, tile vazio, etc.)
+    croqui_satellite_b64 = ""
+    if coords_lonlat:
+        png = render_croqui_satellite_png(coords_lonlat)
+        if png:
+            croqui_satellite_b64 = base64.b64encode(png).decode("ascii")
 
     template = _env.get_template("memorial_descritivo.html.j2")
     html_content = template.render(
@@ -77,6 +87,7 @@ def gerar_memorial_pdf(
         area_m2=float(lote.area_calculada_m2 or 0),
         perimetro_m=float(lote.perimetro_m or 0),
         croqui_svg=croqui_svg,
+        croqui_satellite_b64=croqui_satellite_b64,
         operador={"nome": operador_nome},
         gerado_em=datetime.utcnow(),
         hash_documento="",

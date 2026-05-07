@@ -70,9 +70,15 @@
   <strong>Perímetro:</strong> {{ '%.2f'|format(perimetro_m) }} m
 </p>
 
-{% if croqui_svg %}
+{% if croqui_satellite_b64 or croqui_svg %}
 <h2>Croqui</h2>
+{% if croqui_satellite_b64 %}
+<img src="data:image/png;base64,{{ croqui_satellite_b64 }}"
+     style="max-width:100%; border:1px solid #999; display:block;">
+<p class="small">Imagem orbital © Esri — sobreposição auxiliar do polígono.</p>
+{% else %}
 <div>{{ croqui_svg | safe }}</div>
+{% endif %}
 {% endif %}
 
 <p class="disclaimer">
