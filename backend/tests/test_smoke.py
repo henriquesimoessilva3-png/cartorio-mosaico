@@ -22,6 +22,35 @@ def test_matriculas_routes_registered() -> None:
     assert "/api/matriculas/{matricula_id}" in paths
 
 
+def test_auth_routes_registered() -> None:
+    paths = {route.path for route in app.routes if hasattr(route, "path")}
+    assert "/api/auth/login" in paths
+    assert "/api/auth/me" in paths
+    assert "/api/auth/register" in paths
+
+
+def test_jwt_roundtrip() -> None:
+    from app.services.auth import (
+        create_access_token,
+        decode_access_token,
+        hash_password,
+        verify_password,
+    )
+
+    h = hash_password("uma-senha-forte-123")
+    assert h != "uma-senha-forte-123"
+    assert verify_password("uma-senha-forte-123", h)
+    assert not verify_password("errada", h)
+
+    token = create_access_token(42, "admin")
+    payload = decode_access_token(token)
+    assert payload is not None
+    assert payload["sub"] == "42"
+    assert payload["role"] == "admin"
+
+    assert decode_access_token("nao-eh-um-token-valido") is None
+
+
 def test_cpf_hash_is_deterministic_and_keyed() -> None:
     from app.services.security import hash_cpf_cnpj, last_digit
 

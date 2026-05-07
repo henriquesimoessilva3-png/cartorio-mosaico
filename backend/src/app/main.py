@@ -1,11 +1,11 @@
 from fastapi import FastAPI
 
-from app.api import lotes, matriculas, memoriais, mosaico
+from app.api import auth, lotes, matriculas, memoriais, mosaico
 from app.middleware.audit import AuditMiddleware
 
 app = FastAPI(
     title="Cartório Mosaico API",
-    version="0.1.0",
+    version="0.2.0",
     description=(
         "Cadastro técnico para reconstrução geométrica de matrículas com descrição precária. "
         "Saída é documento auxiliar interno — não substitui ART de agrimensor."
@@ -14,6 +14,7 @@ app = FastAPI(
 
 app.add_middleware(AuditMiddleware)
 
+app.include_router(auth.router)
 app.include_router(matriculas.router)
 app.include_router(lotes.router)
 app.include_router(mosaico.router)
