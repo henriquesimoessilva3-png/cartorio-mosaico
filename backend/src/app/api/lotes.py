@@ -11,6 +11,8 @@ from app.models.lote_geometria import LoteGeometria
 from app.models.matricula import Matricula
 from app.schemas.lote import LoteGeometriaCreate, LoteGeometriaRead
 from app.services import geo
+from app.services.confrontantes import inferir_para_lote
+from app.services.validacao import comparar_descricao_vs_lados
 
 router = APIRouter(prefix="/api/lotes", tags=["lotes"])
 DbSession = Annotated[Session, Depends(get_db)]
@@ -65,7 +67,38 @@ def criar(payload: LoteGeometriaCreate, db: DbSession):
 
     db.commit()
     db.refresh(lote)
+
+    # Inferência automática de confrontantes (best-effort; falha não impede criação)
+    try:
+        inferir_para_lote(db, lote.id)
+    except Exception:
+        pass
+
     return lote
+
+
+@router.post("/{lote_id}/inferir-confrontantes")
+def inferir_confrontantes_endpoint(lote_id: int, db: DbSession):
+    try:
+        confrontantes = inferir_para_lote(db, lote_id)
+    except ValueError as e:
+        raise HTTPException(404, str(e)) from e
+    return {"confrontantes": confrontantes}
+
+
+@router.get("/{lote_id}/validacao-textual")
+def validacao_textual(lote_id: int, db: DbSession):
+    lote = db.get(LoteGeometria, lote_id)
+    if lote is None:
+        raise HTTPException(404, "Lote não encontrado")
+    matricula = db.get(Matricula, lote.matricula_id)
+    distancias = [
+        s["distancia_m"] for s in (lote.azimutes_jsonb or []) if "distancia_m" in s
+    ]
+    return comparar_descricao_vs_lados(
+        matricula.area_descrita_texto or "",
+        distancias,
+    )
 
 
 @router.get("/{lote_id}", response_model=LoteGeometriaRead)

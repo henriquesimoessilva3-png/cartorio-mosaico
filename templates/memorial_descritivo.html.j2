@@ -70,9 +70,9 @@
   <strong>Perímetro:</strong> {{ '%.2f'|format(perimetro_m) }} m
 </p>
 
-{% if croqui_base64 %}
+{% if croqui_svg %}
 <h2>Croqui</h2>
-<img src="data:image/png;base64,{{ croqui_base64 }}" style="max-width:100%; border:1px solid #999">
+<div>{{ croqui_svg | safe }}</div>
 {% endif %}
 
 <p class="disclaimer">

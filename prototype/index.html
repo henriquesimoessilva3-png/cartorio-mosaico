@@ -193,11 +193,67 @@ const map = new maplibregl.Map({
     layers: [{ id: "esri", type: "raster", source: "esri" }]
   },
   center: FERROS_CENTER,
-  zoom: 17,
+  zoom: 14,
   maxZoom: 24
 });
 map.addControl(new maplibregl.NavigationControl());
 map.addControl(new maplibregl.ScaleControl({ maxWidth: 120, unit: "metric" }));
+
+// ─────────────────────────────────────────────────────────────────
+// Toggle de basemap: Esri Satélite ↔ OSM Standard
+// (Em áreas rurais Esri pode não ter imagem em zoom alto.)
+// ─────────────────────────────────────────────────────────────────
+const BASEMAPS = {
+  esri: {
+    label: "Satélite (Esri)",
+    tiles: ["https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}"],
+    maxzoom: 19,
+    attribution: "Tiles © Esri — Maxar, Earthstar Geographics, GIS User Community"
+  },
+  osm: {
+    label: "Mapa (OSM)",
+    tiles: ["https://a.tile.openstreetmap.org/{z}/{x}/{y}.png", "https://b.tile.openstreetmap.org/{z}/{x}/{y}.png", "https://c.tile.openstreetmap.org/{z}/{x}/{y}.png"],
+    maxzoom: 19,
+    attribution: "© OpenStreetMap contributors"
+  }
+};
+let currentBasemap = "esri";
+
+function switchBasemap(name) {
+  if (name === currentBasemap || !BASEMAPS[name]) return;
+  if (map.getLayer(currentBasemap)) map.removeLayer(currentBasemap);
+  if (map.getSource(currentBasemap)) map.removeSource(currentBasemap);
+  const cfg = BASEMAPS[name];
+  map.addSource(name, { type: "raster", tiles: cfg.tiles, tileSize: 256, maxzoom: cfg.maxzoom, attribution: cfg.attribution });
+  // Insere abaixo da primeira camada custom (lote-fill se já existir, senão no topo)
+  const before = map.getLayer("lote-fill") ? "lote-fill" : undefined;
+  map.addLayer({ id: name, type: "raster", source: name }, before);
+  currentBasemap = name;
+}
+
+// Cria o controle UI
+class BasemapControl {
+  onAdd(m) {
+    this._map = m;
+    const div = document.createElement("div");
+    div.className = "maplibregl-ctrl maplibregl-ctrl-group";
+    div.style.padding = "4px";
+    const sel = document.createElement("select");
+    sel.style.cssText = "border:0;background:transparent;font:inherit;cursor:pointer;font-size:12px";
+    Object.entries(BASEMAPS).forEach(([k, v]) => {
+      const opt = document.createElement("option");
+      opt.value = k; opt.textContent = v.label;
+      sel.appendChild(opt);
+    });
+    sel.value = currentBasemap;
+    sel.addEventListener("change", (e) => switchBasemap(e.target.value));
+    div.appendChild(sel);
+    this._div = div;
+    return div;
+  }
+  onRemove() { this._div.remove(); this._map = undefined; }
+}
+map.addControl(new BasemapControl(), "top-right");
 
 // ─────────────────────────────────────────────────────────────────
 // Estado
