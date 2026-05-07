@@ -6,9 +6,11 @@ from shapely.geometry import Polygon
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from app.api.deps import get_current_user, require_role
 from app.db.database import get_db
 from app.models.lote_geometria import LoteGeometria
 from app.models.matricula import Matricula
+from app.models.usuario import Usuario
 from app.schemas.lote import LoteGeometriaCreate, LoteGeometriaRead
 from app.services import geo
 from app.services.confrontantes import inferir_para_lote
@@ -16,6 +18,8 @@ from app.services.validacao import comparar_descricao_vs_lados
 
 router = APIRouter(prefix="/api/lotes", tags=["lotes"])
 DbSession = Annotated[Session, Depends(get_db)]
+AuthUser = Annotated[Usuario, Depends(get_current_user)]
+EditorRole = Annotated[Usuario, Depends(require_role("escrivao", "escrevente"))]
 
 
 @router.post(
@@ -23,7 +27,7 @@ DbSession = Annotated[Session, Depends(get_db)]
     response_model=LoteGeometriaRead,
     status_code=status.HTTP_201_CREATED,
 )
-def criar(payload: LoteGeometriaCreate, db: DbSession):
+def criar(payload: LoteGeometriaCreate, db: DbSession, _user: EditorRole):
     matricula = db.get(Matricula, payload.matricula_id)
     if matricula is None:
         raise HTTPException(404, "Matrícula não encontrada")
@@ -78,7 +82,7 @@ def criar(payload: LoteGeometriaCreate, db: DbSession):
 
 
 @router.post("/{lote_id}/inferir-confrontantes")
-def inferir_confrontantes_endpoint(lote_id: int, db: DbSession):
+def inferir_confrontantes_endpoint(lote_id: int, db: DbSession, _user: EditorRole):
     try:
         confrontantes = inferir_para_lote(db, lote_id)
     except ValueError as e:
@@ -87,7 +91,7 @@ def inferir_confrontantes_endpoint(lote_id: int, db: DbSession):
 
 
 @router.get("/{lote_id}/validacao-textual")
-def validacao_textual(lote_id: int, db: DbSession):
+def validacao_textual(lote_id: int, db: DbSession, _user: AuthUser):
     lote = db.get(LoteGeometria, lote_id)
     if lote is None:
         raise HTTPException(404, "Lote não encontrado")
@@ -102,7 +106,7 @@ def validacao_textual(lote_id: int, db: DbSession):
 
 
 @router.get("/{lote_id}", response_model=LoteGeometriaRead)
-def detalhar(lote_id: int, db: DbSession):
+def detalhar(lote_id: int, db: DbSession, _user: AuthUser):
     lote = db.get(LoteGeometria, lote_id)
     if lote is None:
         raise HTTPException(404, "Lote não encontrado")
@@ -113,7 +117,7 @@ def detalhar(lote_id: int, db: DbSession):
     "/por-matricula/{matricula_id}",
     response_model=list[LoteGeometriaRead],
 )
-def por_matricula(matricula_id: int, db: DbSession):
+def por_matricula(matricula_id: int, db: DbSession, _user: AuthUser):
     stmt = (
         select(LoteGeometria)
         .where(LoteGeometria.matricula_id == matricula_id)

@@ -5,15 +5,18 @@ from fastapi import APIRouter, Depends
 from sqlalchemy import text
 from sqlalchemy.orm import Session
 
+from app.api.deps import get_current_user
 from app.db.database import get_db
+from app.models.usuario import Usuario
 from app.services.topology import detectar_overlaps
 
 router = APIRouter(prefix="/api/mosaico", tags=["mosaico"])
 DbSession = Annotated[Session, Depends(get_db)]
+AuthUser = Annotated[Usuario, Depends(get_current_user)]
 
 
 @router.get("")
-def mosaico(db: DbSession) -> dict:
+def mosaico(db: DbSession, _user: AuthUser) -> dict:
     """FeatureCollection GeoJSON com a versão mais recente de cada matrícula."""
     sql = """
     SELECT DISTINCT ON (lg.matricula_id)
@@ -45,5 +48,5 @@ def mosaico(db: DbSession) -> dict:
 
 
 @router.get("/conflitos")
-def conflitos(db: DbSession) -> dict:
+def conflitos(db: DbSession, _user: AuthUser) -> dict:
     return {"overlaps": detectar_overlaps(db)}

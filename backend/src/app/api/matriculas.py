@@ -5,8 +5,10 @@ from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
+from app.api.deps import get_current_user, require_role
 from app.db.database import get_db
 from app.models.matricula import Matricula
+from app.models.usuario import Usuario
 from app.schemas.matricula import (
     MatriculaCreate,
     MatriculaRead,
@@ -17,6 +19,9 @@ from app.services.security import hash_cpf_cnpj, last_digit
 router = APIRouter(prefix="/api/matriculas", tags=["matriculas"])
 
 DbSession = Annotated[Session, Depends(get_db)]
+AuthUser = Annotated[Usuario, Depends(get_current_user)]
+EditorRole = Annotated[Usuario, Depends(require_role("escrivao", "escrevente"))]
+AdminRole = Annotated[Usuario, Depends(require_role("admin"))]
 
 
 def _apply_cpf(payload: dict) -> dict:
@@ -31,6 +36,7 @@ def _apply_cpf(payload: dict) -> dict:
 @router.get("", response_model=list[MatriculaRead])
 def listar(
     db: DbSession,
+    _user: AuthUser,
     skip: int = Query(0, ge=0),
     limit: int = Query(50, ge=1, le=200),
     status_filter: str | None = Query(None, alias="status"),
@@ -43,7 +49,7 @@ def listar(
 
 
 @router.get("/{matricula_id}", response_model=MatriculaRead)
-def detalhar(matricula_id: int, db: DbSession):
+def detalhar(matricula_id: int, db: DbSession, _user: AuthUser):
     m = db.get(Matricula, matricula_id)
     if m is None:
         raise HTTPException(status_code=404, detail="Matrícula não encontrada")
@@ -51,7 +57,7 @@ def detalhar(matricula_id: int, db: DbSession):
 
 
 @router.post("", response_model=MatriculaRead, status_code=status.HTTP_201_CREATED)
-def criar(payload: MatriculaCreate, db: DbSession):
+def criar(payload: MatriculaCreate, db: DbSession, _user: EditorRole):
     data = _apply_cpf(payload.model_dump())
     m = Matricula(**data)
     db.add(m)
@@ -67,7 +73,12 @@ def criar(payload: MatriculaCreate, db: DbSession):
 
 
 @router.put("/{matricula_id}", response_model=MatriculaRead)
-def atualizar(matricula_id: int, payload: MatriculaUpdate, db: DbSession):
+def atualizar(
+    matricula_id: int,
+    payload: MatriculaUpdate,
+    db: DbSession,
+    _user: EditorRole,
+):
     m = db.get(Matricula, matricula_id)
     if m is None:
         raise HTTPException(status_code=404, detail="Matrícula não encontrada")
@@ -80,7 +91,7 @@ def atualizar(matricula_id: int, payload: MatriculaUpdate, db: DbSession):
 
 
 @router.delete("/{matricula_id}", status_code=status.HTTP_204_NO_CONTENT)
-def remover(matricula_id: int, db: DbSession):
+def remover(matricula_id: int, db: DbSession, _user: AdminRole):
     m = db.get(Matricula, matricula_id)
     if m is None:
         raise HTTPException(status_code=404, detail="Matrícula não encontrada")

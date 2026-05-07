@@ -88,3 +88,51 @@ def client(engine, reset_db):
     with TestClient(app) as c:
         yield c
     app.dependency_overrides.clear()
+
+
+@pytest.fixture
+def auth_client(engine, reset_db):
+    """Client com admin já logado (Authorization header default)."""
+    from fastapi.testclient import TestClient
+    from sqlalchemy.orm import sessionmaker
+
+    from app.db.database import get_db
+    from app.main import app
+    from app.models.usuario import Usuario
+    from app.services.auth import hash_password
+
+    Session = sessionmaker(bind=engine)
+
+    with Session() as db:
+        admin = Usuario(
+            nome="Admin Test",
+            email="admin@test.com",
+            password_hash=hash_password("admin-test-1234"),
+            role="admin",
+            ativo=True,
+        )
+        db.add(admin)
+        db.commit()
+
+    def override_get_db():
+        s = Session()
+        try:
+            yield s
+        finally:
+            s.close()
+
+    app.dependency_overrides[get_db] = override_get_db
+
+    with TestClient(app) as c:
+        r = c.post(
+            "/api/auth/login",
+            data={
+                "username": "admin@test.com",
+                "password": "admin-test-1234",
+            },
+        )
+        assert r.status_code == 200, r.text
+        c.headers["Authorization"] = f"Bearer {r.json()['access_token']}"
+        yield c
+
+    app.dependency_overrides.clear()
