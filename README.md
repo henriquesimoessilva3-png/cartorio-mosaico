@@ -50,3 +50,7 @@ curl http://localhost:8000/health
 ## Posicionamento jurídico
 
 Saída do MVP é **documento auxiliar interno do cartório**. Não substitui ART de agrimensor nem levantamento de campo. Todo PDF gerado traz disclaimer obrigatório.
+
+## Deploy em VPS
+
+Guia completo em [docs/DEPLOY.md](docs/DEPLOY.md). Estimativa: ~€4/mês em Hetzner CX22 com `docker compose -f docker-compose.prod.yml up -d`.

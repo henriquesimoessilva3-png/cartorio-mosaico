@@ -30,7 +30,9 @@ Thumbs.db
 # Env
 .env
 .env.local
+.env.prod
 .env.*.local
+Caddyfile
 
 # Logs
 *.log
